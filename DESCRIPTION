@@ -1,0 +1,10 @@
+usethis::use_description(
+  fields = list(
+    Title = "R Client for the Biologer Web API",
+    Version = "0.0.0.9000",
+    License = "MIT + file LICENSE",
+    RoxygenNote = "7.2.3",
+    Roxygen = "list(markdown = TRUE)",
+    Imports = "httr, jsonlite, dplyr, readr" # Dodavanje zavisnosti
+  )
+)

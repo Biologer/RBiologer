@@ -40,7 +40,9 @@ write.to.renviron <- function(key, value) {
 }
 
 #' @title Sets the Biologer server and access token
-#' @description This function allows user to set the Biologer server (sr, hr, ba or me) and
+#'
+#' @description
+#' This function allows user to set the Biologer server (sr, hr, ba or me) and
 #' access token for the API calls. Obtain access token from User > Preferences
 #' > API Tokens. Your server and access token will be saved in local '~/.Renviron'
 #' file and loaded automatically in your R session.
