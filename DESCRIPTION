@@ -1,10 +1,16 @@
-usethis::use_description(
-  fields = list(
-    Title = "R Client for the Biologer Web API",
-    Version = "0.0.0.9000",
-    License = "MIT + file LICENSE",
-    RoxygenNote = "7.2.3",
-    Roxygen = "list(markdown = TRUE)",
-    Imports = "httr, jsonlite, dplyr, readr" # Dodavanje zavisnosti
+Package: RBiologer
+Title: Connect to online Biologer API, download and analyse data
+Version: 0.0.0.9000
+Authors@R: c(
+    person(, role = "ctb"),
+    person("Tomislav", "Gojak", , "tomislav.gojak@hhdhyla.hr", role = c("aut", "cre")),
+    person("Miloš", "Popović", , "mpopovic@pmf.ni.ac.rs", role = c("aut", "cre"))
   )
-)
+Description: Biologer R package is primarily used to connect to online API and download data.
+  It could use any of officially supported servers (i.e. biologer.rs, biologer.hr, biologer.ba,
+  biologer.me) using a token generated through your account preferences. This package also allows
+  simple data visualisation and analysis.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2

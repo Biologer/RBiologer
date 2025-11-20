@@ -122,101 +122,129 @@ get.biologer.base.url <- function() {
 
 #' URL Parameter Enforcement
 #' @keywords internal
-enforce.per.page <- function(url, per.page = 1500) {
+enforce.per.page <- function(url, per.page = 1000) {
   if (is.null(url)) return(NULL)
   parsed <- httr::parse_url(url)
   parsed$query$per_page <- per.page
   httr::build_url(parsed)
 }
 
+#' Get Biologer API Access Token
+#' @keywords internal
+get_biologer_token <- function() {
+  username <- Sys.getenv("BIOLOGER_USER", "mail@mail.ma")
+  password <- Sys.getenv("BIOLOGER_PASS", "pass")
+
+  response <- httr::POST(
+    "https://biologer.hr/oauth/token",
+    body = list(
+      grant_type = "password",
+      client_id = "integer",
+      client_secret = "string",
+      scope = "*",
+      username = username,
+      password = password
+    ),
+    encode = "form",
+    httr::timeout(30)
+  )
+
+  if (httr::status_code(response) != 200) {
+    stop("Authentication failed: ", httr::content(response, "text"))
+  }
+
+  httr::content(response)$access_token
+}
+
 #' Fetch Paginated Observations
 #' @keywords internal
-get.public.field.observations <- function() {
+fetch.observations <- function() {
   token <- get.biologer.token()
   base.url <- get.biologer.base.url()
   api.path <- "/public-field-observations"
   full.url <- paste0(base.url, api.path)
 
   all.obs <- list()
-  url <- enforce.per.page(full.url, per.page = 1000)
+  url <- enforce.per.page(full.url)
   total.records <- NULL
   cumulative <- 0
 
-  repeat {
-    if (is.null(url)) break
+  while (!is.null(url)) {
+    for (i in 1:3) {
+      response <- tryCatch({
+        httr::GET(
+          url,
+          httr::add_headers(
+            Authorization = paste("Bearer", token),
+            Accept = "application/json"
+          ),
+          httr::timeout(30)
+        )
+      }, error = function(e) NULL)
 
-    h <- curl::new_handle()
-    curl::handle_setheaders(h,
-      Authorization = paste("Bearer", token),
-      Accept = "application/json"
-    )
-    curl::handle_setopt(h, http_version = 2)  # Force HTTP/1.1
-
-    res <- curl::curl_fetch_memory(url, handle = h)
-
-    # --- Handle server rate/overload conditions ---
-    if (res$status_code %in% c(429, 503)) {
-      # Exponential backoff for 503
-      wait <- ifelse(res$status_code == 429, 15, 5 + runif(1, 0, 5))
-      message("Server returned ", res$status_code,
-              ". Waiting ", round(wait, 1), " seconds before retry...")
-      Sys.sleep(wait)
-      next
+      if (!is.null(response)) break
+      Sys.sleep(10)
     }
 
-    # Non-200 means stop
-    if (res$status_code != 200) {
-      warning(paste("Failed to fetch page, code:", res$status_code))
+    if (is.null(response) || httr::status_code(response) != 200) {
+      warning("Failed to fetch page after retries")
       break
     }
 
-    data <- jsonlite::fromJSON(rawToChar(res$content))
-
-    # Extract total record count on first page
-    if (is.null(total.records)) {
-      total.records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
-      if (!is.null(total.records))
-        message("Total records to fetch: ", format(total.records, big.mark = ","))
+    if (httr::status_code(response) == 429) {
+      Sys.sleep(15)
+      next
     }
 
-    # Add this page
+    # Suppress JSON encoding message
+    data <- suppressMessages(
+      jsonlite::fromJSON(httr::content(response, "text"), flatten = TRUE)
+    )
+
+    # Get total records from first response
+    if (is.null(total.records)) {
+      total.records <- tryCatch(
+        as.integer(data$meta$total),
+        error = function(e) NULL
+      )
+      if (!is.null(total.records)) {
+        message("Total records to fetch: ", format(total.records, big.mark = ","))
+      }
+    }
+
+    # Update progress
     current.count <- nrow(data$data)
     cumulative <- cumulative + current.count
-
-    # Progress display
     if (!is.null(total.records)) {
-      message(
-        "Fetched ", current.count, " records (",
+      progress <- paste0(
         format(cumulative, big.mark = ","), "/",
-        format(total.records, big.mark = ","), " = ",
-        round(cumulative / total.records * 100, 1), "%)"
+        format(total.records, big.mark = ","),
+        " (", round(cumulative / total.records * 100, 1), "%)"
       )
     } else {
-      message("Fetched ", current.count, " records (Total so far: ", cumulative, ")")
+      progress <- format(cumulative, big.mark = ",")
     }
 
-    all.obs[[length(all.obs) + 1]] <- data$data
+    message("Fetched page with ", current.count, " records (Total: ", progress, ")")
 
-    # next page
-    url <- data$links$`next`
-    url <- enforce.per.page(url)  # keep same page size
-
+    all.obs <- c(all.obs, list(data$data))
+    url <- enforce.per.page(data$links$`next`)
     Sys.sleep(0.5)
   }
 
-  # ---- Base R binding instead of dplyr::bind_rows ----
-  do.call(rbind, all.obs)
+  dplyr::bind_rows(all.obs)
 }
 
 #' Main Export Function
 #' @export
-get.biologer.data <- function(filename = "biologer_data.csv") {
-  df <- get.public.field.observations()
+get_biologer_data <- function(save_path = "biologer_data.csv") {
+  token <- get_biologer_token()
+  df <- fetch.observations(token)
 
   if (!is.null(df) && nrow(df) > 0) {
-    readr::write_excel_csv(df, filename)
+    readr::write_excel_csv(df, save_path)
     message("\nSaved ", format(nrow(df), big.mark = ","),
-            " observations to ", filename)
+            " observations to ", save_path)
     invisible(df)
   } else {
     message("No data retrieved")
@@ -230,7 +258,7 @@ get.biologer.data <- function(filename = "biologer_data.csv") {
 #' Opens the Biologer data CSV file as a dataframe.
 #'
 #' @param path A character string specifying the path to the CSV file.
-#'             If NULL, defaults to the path used in `get.biologer.data()`.
+#'             If NULL, defaults to the path used in `get_biologer_data()`.
 #' @param verbose Logical, whether to display messages about data loading. Defaults to TRUE.
 #' @return A dataframe containing the Biologer data.
 #' @export
@@ -367,8 +395,7 @@ plot.zupanija <- function() {
 
 #' Plot Biologer Observations on a Map
 #'
-#' Plots latitude and longitude of observations from the Biologer dataframe (`df`) on
-#' either the RH_2018 or Zupanije map.
+#' Plots latitude and longitude of observations from the Biologer dataframe (`df`) on either the RH_2018 or Zupanije map.
 #'
 #' @param fill Column name to use for coloring points. Default is "taxon.name".
 #' @param shape Column name to use for point shapes. Default is NULL (no shapes).
@@ -671,8 +698,7 @@ plot.zupanije <- function(fill = "taxon.name", shape = NULL, zupanija, df,
 ####################################3
 #' Plot Observations Within a Polygon
 #'
-#' This function plots observations within a user-defined polygon, 
-#' providing both a detailed plot with observations and a location overview.
+#' This function plots observations within a user-defined polygon, providing both a detailed plot with observations and a location overview.
 #'
 #' @param fill Column name for coloring points. Default is "taxon.name".
 #' @param shape Column name for point shapes. Default is NULL (no shapes).
@@ -693,8 +719,7 @@ plot.zupanije <- function(fill = "taxon.name", shape = NULL, zupanija, df,
 #' @param polygon_fill_color Fill color for the polygon. Default is "orange".
 #' @param polygon_border_color Border color for the polygon. Default is "red".
 #' @param polygon_border_width Border width for the polygon. Default is 1.
-#' @param palette Color palette for points. Can be a predefined palette (e.g., "viridis")
-#' or a custom named vector. Default is "viridis".
+#' @param palette Color palette for points. Can be a predefined palette (e.g., "viridis") or a custom named vector. Default is "viridis".
 #'
 #' @return A list containing two ggplot objects:
 #'   - `plot_with_points`: Plot showing the observations within the polygon.
