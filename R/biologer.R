@@ -4,226 +4,240 @@
 #' @importFrom readr write_csv locale
 NULL
 
-# The list of abailble servers
-BIOLOGER_URLS <- c(
-  "rs" = "https://biologer.rs/api",
-  "hr" = "https://biologer.hr/api",
-  "bs" = "https://biologer.bs/api",
-  "me" = "https://biologer.me/api"
+#' Set or Update the 'per_page' Query Parameter in a URL
+#'
+#' Ensures that a given URL for the Biologer API includes the 'per_page'
+#' query parameter, setting it to a specified value (defaulting to 1000).
+#'
+#' This function safely sets the pagination size for API requests by:
+#' 1. Appending '?per_page=X' if no query parameters exist.
+#' 2. Appending '&per_page=X' if other query parameters exist.
+#' 3. Overwriting an existing 'per_page' parameter if found.
+#'
+#' @param url A character string representing the URL to be modified.
+#'   Can be the initial base API path or a 'next' link from a previous API response.
+#' @param per.page An integer specifying the desired number of records per page.
+#'   Defaults to 1000.
+#' @return A character string representing the modified URL with the 'per_page' parameter set.
+#'   Returns \code{NULL} if the input \code{url} is \code{NULL}.
+#' @keywords internal
+set_per_page <- function(url, per.page = 1000) {
+  if (is.null(url)) return(NULL)
+
+  per_page_str <- as.character(per.page)
+  pattern <- "per_page=[0-9]+"
+
+  if (grepl(pattern, url)) {
+    # per_page already exists in the URL. Replace its value.
+    new_url <- gsub(pattern, paste0("per_page=", per_page_str), url)
+  } else {
+    # per_page does not exist. Append it to the URL.
+    if (grepl("\\?", url)) {
+      new_url <- paste0(url, "&per_page=", per_page_str)
+    } else {
+      new_url <- paste0(url, "?per_page=", per_page_str)
+    }
+  }
+
+  return(URLencode(new_url))
+}
+
+#' @keywords internal
+get_fetch_start_url <- function(base_api_url, last_timestamp) {
+  url <- set_per_page(base_api_url)
+
+  if (last_timestamp != "0") {
+    url <- paste0(url, "&updated_after=", URLencode(last_timestamp))
+  }
+
+  url
+}
+
+OBSERVATION_COLUMNS_TO_KEEP <- c(
+  "id", "taxon_id", "taxon_suggestion", "day", "month", "year",
+  "location", "latitude", "longitude", "mgrs10k", "accuracy", "elevation",
+  "photos", "observer", "identifier", "license", "sex", "stage_id", "number",
+  "note", "project", "habitat", "found_on", "found_dead", "found_dead_note",
+  "data_license", "time", "status", "types", "dataset", "atlas_code",
+  "timed_count_id", "taxon.rank", "observed_by.id", "identified_by.id"
 )
 
-#' Internal function for updating .Renviron variables
+#' Collapse nested 'types' data frame into a semicolon-separated string of names.
+#' @param type_df A data frame containing 'name' column, or an empty list/data frame.
 #' @keywords internal
-write.to.renviron <- function(key, value) {
-  home.dir <- Sys.getenv("HOME")
-  renviron.path <- file.path(home.dir, ".Renviron")
-
-  if (!file.exists(renviron.path)) {
-    file.create(renviron.path)
-  }
-
-  lines <- readLines(renviron.path, warn = FALSE)
-  new.entry <- paste0(key, "='", value, "'")
-  key.pattern <- paste0("^", key, "=.*")
-
-  # Update the existing key or add new one
-  if (any(grepl(key.pattern, lines))) {
-    lines <- gsub(key.pattern, new.entry, lines)
+collapse_types <- function(type_df) {
+  if (is.data.frame(type_df) && nrow(type_df) > 0 && "name" %in% names(type_df)) {
+    paste(type_df$name, collapse = "; ")
   } else {
-    lines <- c(lines, new.entry)
+    ""
   }
-
-  writeLines(lines, renviron.path)
-
-  # Set for current session
-  do.call(Sys.setenv, as.list(setNames(value, key)))
 }
 
-#' @title Sets the Biologer server and access token
+#' Collapse nested 'photos' data frame into a semicolon-separated string of URLs.
+#' @param photos_df A data frame containing 'url' column, or an empty list/data frame.
+#' @keywords internal
+collapse_photo_urls <- function(photos_df) {
+  if (is.data.frame(photos_df) && nrow(photos_df) > 0 && "url" %in% names(photos_df)) {
+    paste(photos_df$url, collapse = "; ")
+  } else {
+    ""
+  }
+}
+
+#' Fetch Paginated Observations and Save/Resume using Timestamp
 #'
-#' @description
-#' This function allows user to set the Biologer server (sr, hr, ba or me) and
-#' access token for the API calls. Obtain access token from User > Preferences
-#' > API Tokens. Your server and access token will be saved in local '~/.Renviron'
-#' file and loaded automatically in your R session.
+#' Resumes the download from the last successfully fetched record's timestamp.
 #'
-#' @param server Alias of the Biologer server. Available values are: 'rs', 'hr', 'bs', and 'me'.
-#' @param token String representing the access token obtained from the user preferences
-#' on the Biologer web page.
-#'
-#' @return Invisible logical calue (TRUE) if the server and token are successfully saved.
-#' The function stops the execution and displays the error if the server/token is invalid.
-#'
-#' @note
-#' To obtain access token, the user must be logged in to Biologer web page using your browser.
-#' Here you can obtain the token by selecting User > Preferences > API Tokens > Generate token.
-#' The variables will be set automatically for current session, but you need to restart R session
-#' for the changes to became permanent.
-#'
-#' @examples
-#' \dontrun{
-#' # Example: Setting the access token for Croatian Biologer server
-#' biologer.login(
-#'   server = "hr"
-#'   token = "TOKEN_OBRAINED FROM THE BROWSER",
-#' )
-#'
-#' # Taken and URL are not availavle in internal package functions.
-#' }
-#'
+#' @param filename Character string for the path to save the final data
+#' (e.g., "observations.csv").
+#' @param base_url Base URL of the API.
+#' @param token JWT authorization token.
+#' @keywords internal
 #' @export
-biologer.login <- function(server = "rs", token) {
-  # 1. Check the imput parameters
-  if (missing(token) || !is.character(token) || nchar(token) < 20) {
-    stop("Please enter a valid access token.", call. = FALSE)
+get_public_field_observations <- function(base_url, token, filename = NULL) {
+
+  if (is.null(filename)) {
+    base_dir <- get_storage_path()
+    filename <- file.path(base_dir, "biologer_observations.csv")
   }
 
-  server.key <- tolower(server)
+  checkpoint_path <- paste0(filename, ".checkpoint.rds")
+  base_api_url <- paste0(base_url, "/public-field-observations")
 
-  if (!server.key %in% names(BIOLOGER_URLS)) {
-    stop(paste0("Unknown Biologer platform selected. Available options are: ",
-                paste(names(BIOLOGER_URLS), collapse = ", ")), call. = FALSE)
+  last_success_timestamp <- "0"
+  records_fetched <- 0
+  total_records <- NULL
+
+  if (file.exists(checkpoint_path)) {
+
+    checkpoint <- readRDS(checkpoint_path)
+
+    if (!is.null(checkpoint$next_url)) {
+      # Check if the last run was interrupted
+      url <- set_per_page(checkpoint$next_url, per.page = 1000)
+      records_fetched <- checkpoint$records_fetched
+      total_records <- checkpoint$total_records
+      message(paste0("Resuming interrupted paginated fetch from: ", url))
+    } else {
+      # Starting an Incremental Fetch (previous run completed successfully)
+      last_success_timestamp <- checkpoint$last_success_timestamp
+      url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+      records_fetched <- 0
+      total_records <- NULL
+      message(paste0("Starting incremental fetch after timestamp: ", last_success_timestamp))
+    }
+  } else {
+    # Initial Full Download
+    url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+    message("Starting initial full fetch from URL: ", url)
   }
-
-  base.url <- BIOLOGER_URLS[[server.key]]
-
-  # 2. Save data to .Renviron
-  write.to.renviron("BIOLOGER_TOKEN", token)
-  write.to.renviron("BIOLOGER_BASE_URL", base.url)
-
-  message(paste0("Access token and server (", base.url,
-                 ") is successfully saved in your .Renviron file and loaded in the current session.\n"))
-  message("For the changes to be permanent in future R sesstiona, please restart R.")
-
-  invisible(TRUE)
-}
-
-#' @keywords internal
-get.biologer.token <- function() {
-  token <- Sys.getenv("BIOLOGER_TOKEN")
-  if (token == "") {
-    stop("Biologer pristupni token nije pronađen.
-         Molimo koristite funkciju 'biologer.login(token, server)'
-         za postavljanje.", call. = FALSE)
-  }
-  return(token)
-}
-
-#' @keywords internal
-get.biologer.base.url <- function() {
-  url <- Sys.getenv("BIOLOGER_BASE_URL")
-  if (url == "") {
-    stop("Biologer server URL nije pronađen.
-         Molimo koristite funkciju 'biologer.login(token, server)'
-         za postavljanje.", call. = FALSE)
-  }
-  return(url)
-}
-
-#' URL Parameter Enforcement
-#' @keywords internal
-enforce.per.page <- function(url, per.page = 1500) {
-  if (is.null(url)) return(NULL)
-  parsed <- httr::parse_url(url)
-  parsed$query$per_page <- per.page
-  httr::build_url(parsed)
-}
-
-#' Fetch Paginated Observations
-#' @keywords internal
-get.public.field.observations <- function() {
-  token <- get.biologer.token()
-  base.url <- get.biologer.base.url()
-  api.path <- "/public-field-observations"
-  full.url <- paste0(base.url, api.path)
-
-  all.obs <- list()
-  url <- enforce.per.page(full.url, per.page = 1000)
-  total.records <- NULL
-  cumulative <- 0
 
   repeat {
     if (is.null(url)) break
 
     h <- curl::new_handle()
-    curl::handle_setheaders(h,
-      Authorization = paste("Bearer", token),
-      Accept = "application/json"
-    )
-    curl::handle_setopt(h, http_version = 2)  # Force HTTP/1.1
+    curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
+    result <- curl::curl_fetch_memory(url, handle = h)
 
-    res <- curl::curl_fetch_memory(url, handle = h)
-
-    # --- Handle server rate/overload conditions ---
-    if (res$status_code %in% c(429, 503)) {
+    # Handle server rate/overload conditions
+    if (result$status_code %in% c(429, 503)) {
       # Exponential backoff for 503
-      wait <- ifelse(res$status_code == 429, 15, 5 + runif(1, 0, 5))
-      message("Server returned ", res$status_code,
-              ". Waiting ", round(wait, 1), " seconds before retry...")
+      wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
+      message("Server returned ", result$status_code, ". Waiting ",
+              round(wait, 1), " seconds before retry...")
       Sys.sleep(wait)
       next
     }
 
-    # Non-200 means stop
-    if (res$status_code != 200) {
-      warning(paste("Failed to fetch page, code:", res$status_code))
+    # If the server return error code
+    if (result$status_code != 200) {
+      warning(paste("Failed to fetch page, code:", result$status_code))
       break
     }
 
-    data <- jsonlite::fromJSON(rawToChar(res$content))
+    data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
 
     # Extract total record count on first page
-    if (is.null(total.records)) {
-      total.records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
-      if (!is.null(total.records))
-        message("Total records to fetch: ", format(total.records, big.mark = ","))
+    if (is.null(total_records)) {
+      total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
+      if (!is.null(total_records))
+        message("Total records to fetch: ", format(total_records, big.mark = ","))
     }
 
     # Add this page
-    current.count <- nrow(data$data)
-    cumulative <- cumulative + current.count
+    current_count <- nrow(data$data)
+    records_fetched <- records_fetched + current_count
 
     # Progress display
-    if (!is.null(total.records)) {
+    if (!is.null(total_records)) {
       message(
-        "Fetched ", current.count, " records (",
-        format(cumulative, big.mark = ","), "/",
-        format(total.records, big.mark = ","), " = ",
-        round(cumulative / total.records * 100, 1), "%)"
+        "Fetched ", current_count, " records (",
+        format(records_fetched, big.mark = ","), "/",
+        format(total_records, big.mark = ","), " = ",
+        round(records_fetched / total_records * 100, 1), "%)"
       )
     } else {
-      message("Fetched ", current.count, " records (Total so far: ", cumulative, ")")
+      message("Fetched ", current_count, " records (Total so far: ", records_fetched, ")")
     }
 
-    all.obs[[length(all.obs) + 1]] <- data$data
+    # 1. Save the data
+    current_page_data <- data$data
+    columns_to_select <- intersect(OBSERVATION_COLUMNS_TO_KEEP, names(current_page_data))
+    current_page_data <- current_page_data[, columns_to_select]
 
-    # next page
+    # Process the 'types' column
+    if ("types" %in% names(current_page_data) && is.list(current_page_data$types)) {
+      current_page_data$types <- unlist(lapply(current_page_data$types, collapse_types))
+    }
+
+    # Process the 'photos' column
+    if ("photos" %in% names(current_page_data) && is.list(current_page_data$photos)) {
+      current_page_data$photos <- unlist(lapply(current_page_data$photos, collapse_photo_urls))
+    }
+
+    data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
+
+    # 2. Save the progress
     url <- data$links$`next`
-    url <- enforce.per.page(url)  # keep same page size
+    checkpoint <- list(
+      last_success_timestamp = last_success_timestamp,
+      records_fetched = records_fetched,
+      total_records = total_records
+    )
+    if (!is.null(url)) {
+      checkpoint$next_url <- url
+    }
+    saveRDS(checkpoint, checkpoint_path)
 
+    if (is.null(url)) {
+      message("Download complete. Finalizing...")
+      break
+    }
+
+    url <- set_per_page(url, per.page = 1000)
     Sys.sleep(0.5)
   }
 
-  # ---- Base R binding instead of dplyr::bind_rows ----
-  do.call(rbind, all.obs)
+  # Return the data from the file
+  data.table::fread(filename)
 }
 
-#' Main Export Function
+#' Main function used to get data from Biologer server
+#'
+#' @param filename Character string for the path to save the final data
+#' (e.g., "observations.csv"). Set to NULL to use default R location.
 #' @export
-get.biologer.data <- function(filename = "biologer_data.csv") {
-  df <- get.public.field.observations()
-
-  if (!is.null(df) && nrow(df) > 0) {
-    readr::write_excel_csv(df, filename)
-    message("\nSaved ", format(nrow(df), big.mark = ","),
-            " observations to ", filename)
-    invisible(df)
-  } else {
-    message("No data retrieved")
-    invisible(NULL)
+get_biologer_data <- function(filename = NULL) {
+  if (Sys.getenv("BIOLOGER_TOKEN") == "") {
+    stop("You must be logged in Biologer server to use RBiologer package.
+      Use the function 'biologer_login(token, server)' for this purpose.", call. = FALSE)
   }
-}
 
+  base_url <- get_biologer_base_url()
+  token <- get_biologer_token()
+
+  get_public_field_observations(base_url, token, filename)
+}
 
 #' Open Biologer Data
 #'
@@ -272,9 +286,6 @@ open.data <- function(path = "biologer_data.csv", verbose = TRUE) {
 #'            `taxon.id = c("value1", "value2")`.
 #' @return A subsetted dataframe.
 #' @export
-
-
-
 subset.biologer <- function(df = NULL, ...) {
   # Load default dataset if df is not supplied
   if (is.null(df)) {
@@ -306,7 +317,6 @@ subset.biologer <- function(df = NULL, ...) {
   # Return the subsetted dataframe
   return(subset_df)
 }
-
 
 
 #############################################################

@@ -54,5 +54,6 @@
 A ggplot object showing observations on the selected map layer.
 }
 \description{
-Plots latitude and longitude of observations from the Biologer dataframe (\code{df}) on either the RH_2018 or Zupanije map.
+Plots latitude and longitude of observations from the Biologer dataframe (\code{df}) on
+either the RH_2018 or Zupanije map.
 }

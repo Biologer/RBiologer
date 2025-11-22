@@ -8,7 +8,7 @@
 }
 \arguments{
 \item{path}{A character string specifying the path to the CSV file.
-If NULL, defaults to the path used in \code{get_biologer_data()}.}
+If NULL, defaults to the path used in \code{get.biologer.data()}.}
 
 \item{verbose}{Logical, whether to display messages about data loading. Defaults to TRUE.}
 }

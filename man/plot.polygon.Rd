@@ -66,7 +66,8 @@
 
 \item{polygon_border_width}{Border width for the polygon. Default is 1.}
 
-\item{palette}{Color palette for points. Can be a predefined palette (e.g., "viridis") or a custom named vector. Default is "viridis".}
+\item{palette}{Color palette for points. Can be a predefined palette (e.g., "viridis")
+or a custom named vector. Default is "viridis".}
 }
 \value{
 A list containing two ggplot objects:
@@ -76,5 +77,6 @@ A list containing two ggplot objects:
 }
 }
 \description{
-This function plots observations within a user-defined polygon, providing both a detailed plot with observations and a location overview.
+This function plots observations within a user-defined polygon,
+providing both a detailed plot with observations and a location overview.
 }
