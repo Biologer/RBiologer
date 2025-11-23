@@ -39,7 +39,7 @@ set_per_page <- function(url, per.page = 1000) {
     }
   }
 
-  return(URLencode(new_url))
+  URLencode(new_url)
 }
 
 #' @keywords internal
@@ -47,19 +47,34 @@ get_fetch_start_url <- function(base_api_url, last_timestamp) {
   url <- set_per_page(base_api_url)
 
   if (last_timestamp != "0") {
-    url <- paste0(url, "&updated_after=", URLencode(last_timestamp))
+    url <- paste0(url, "&updated_after=", last_timestamp)
   }
 
-  url
+  URLencode(url)
 }
 
-OBSERVATION_COLUMNS_TO_KEEP <- c(
-  "id", "taxon_id", "taxon_suggestion", "day", "month", "year",
-  "location", "latitude", "longitude", "mgrs10k", "accuracy", "elevation",
-  "photos", "observer", "identifier", "license", "sex", "stage_id", "number",
-  "note", "project", "habitat", "found_on", "found_dead", "found_dead_note",
-  "data_license", "time", "status", "types", "dataset", "atlas_code",
-  "timed_count_id", "taxon.rank", "observed_by.id", "identified_by.id"
+FIELD_OBSERVATION_COLUMNS <- c(
+  "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
+  "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",
+  "stage_id", "number", "note", "project", "habitat", "found_on", "found_dead",
+  "found_dead_note", "data_license", "time", "status", "types", "dataset", "atlas_code",
+  "timed_count_id",
+  "taxon.id", "taxon.name", "taxon.rank",
+  "observed_by.id", "identified_by.id"
+)
+
+LITERATURE_OBSERVATION_COLUMNS <- c(
+  "id", "year", "month", "day", "elevation", "minimum_elevation",
+  "maximum_elevation", "latitude", "longitude", "mgrs10k", "location",
+  "accuracy", "georeferenced_by", "georeferenced_date", "observer", "identifier",
+  "note", "sex", "number", "project", "found_on", "habitat", "stage_id",
+  "time", "dataset", "is_original_data", "cited_publication_id",
+  "place_where_referenced_in_publication", "original_date", "original_locality",
+  "original_elevation", "original_coordinates", "original_identification",
+  "original_identification_validity", "other_original_data", "collecting_start_year",
+  "collecting_start_month", "collecting_end_year", "collecting_end_month",
+  "taxon.id", "taxon.name", "taxon.rank",
+  "publication.id", "publication.year", "publication.authors"
 )
 
 #' Collapse nested 'types' data frame into a semicolon-separated string of names.
@@ -84,6 +99,93 @@ collapse_photo_urls <- function(photos_df) {
   }
 }
 
+#' Formats a list of publication authors into a standard citation string.
+#'
+#' @param authors_list A list column element containing a data frame of authors
+#'   with 'last_name' and 'first_name' columns.
+#' @keywords internal
+format_authors <- function(authors_list) {
+
+  # 1. Handle empty cases
+  if (!is.data.frame(authors_list) || nrow(authors_list) == 0) {
+    return("")
+  }
+
+  # 2. Prepare full citation string (Last Name, Initial)
+  formatted_authors <- paste0(
+    authors_list$last_name,
+    ", ",
+    substr(authors_list$first_name, 1, 1),
+    "."
+  )
+
+  n_authors <- length(formatted_authors)
+
+  # 3. Apply the specific citation rules
+  if (n_authors == 1) {
+    # Rule 1: One author
+    formatted_authors[1]
+  } else if (n_authors == 2) {
+    # Rule 2: Two authors
+    paste(formatted_authors, collapse = " and ")
+  } else if (n_authors >= 3) {
+    # Rule 3: Three or more authors
+    paste0(formatted_authors[1], " et al.")
+  } else {
+    "" # Should not happen :)
+  }
+}
+
+#' Display dynamic, single-line progress update in the console.
+#'
+#' @param records_fetched The total number of records fetched so far.
+#' @param total_records The total number of records expected (or NULL if unknown).
+#' @param current_count The number of records fetched in the current page (optional, for debugging).
+#' @keywords internal
+display_progress <- function(records_fetched, total_records) {
+
+  # Only run dynamic update in an interactive session
+  if (interactive()) {
+    output_string <- "\r" # Carriage return to overwrite the current line
+    if (!is.null(total_records) && total_records > 0) {
+      progress_percentage <- round(records_fetched / total_records * 100, 1)
+      output_string <- paste0(
+        output_string,
+        "Fetched ",
+        format(records_fetched, big.mark = ","), "/",
+        format(total_records, big.mark = ","),
+        " records (",
+        round(progress_percentage), "%)  "
+      )
+    } else {
+      # Total_records is unknown or zero
+      output_string <- paste0(
+        output_string,
+        "Fetched ",
+        format(records_fetched, big.mark = ","),
+        " records so far."
+      )
+    }
+
+    cat(output_string) # Print the string without a newline
+
+  } else {
+    # Fallback for non-interactive sessions (e.g., Rscript)
+    # We use message() here to ensure output is captured in logs/standard out.
+    if (!is.null(total_records)) {
+      progress_percentage <- round(records_fetched / total_records * 100, 1)
+      message(
+        "Progress: ",
+        format(records_fetched, big.mark = ","), "/",
+        format(total_records, big.mark = ","),
+        " (", progress_percentage, "%)"
+      )
+    } else {
+      message("Progress: Fetched ", format(records_fetched, big.mark = ","), " records so far.")
+    }
+  }
+}
+
 #' Fetch Paginated Observations and Save/Resume using Timestamp
 #'
 #' Resumes the download from the last successfully fetched record's timestamp.
@@ -96,9 +198,10 @@ collapse_photo_urls <- function(photos_df) {
 #' @export
 get_public_field_observations <- function(base_url, token, filename = NULL) {
 
+  # Set the default file name
   if (is.null(filename)) {
     base_dir <- get_storage_path()
-    filename <- file.path(base_dir, "biologer_observations.csv")
+    filename <- file.path(base_dir, "biologer_field_observations.csv")
   }
 
   checkpoint_path <- paste0(filename, ".checkpoint.rds")
@@ -168,21 +271,12 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     current_count <- nrow(data$data)
     records_fetched <- records_fetched + current_count
 
-    # Progress display
-    if (!is.null(total_records)) {
-      message(
-        "Fetched ", current_count, " records (",
-        format(records_fetched, big.mark = ","), "/",
-        format(total_records, big.mark = ","), " = ",
-        round(records_fetched / total_records * 100, 1), "%)"
-      )
-    } else {
-      message("Fetched ", current_count, " records (Total so far: ", records_fetched, ")")
-    }
+    # Display progress
+    display_progress(records_fetched = records_fetched, total_records = total_records)
 
     # 1. Save the data
     current_page_data <- data$data
-    columns_to_select <- intersect(OBSERVATION_COLUMNS_TO_KEEP, names(current_page_data))
+    columns_to_select <- intersect(FIELD_OBSERVATION_COLUMNS, names(current_page_data))
     current_page_data <- current_page_data[, columns_to_select]
 
     # Process the 'types' column
@@ -200,7 +294,6 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     # 2. Save the progress
     url <- data$links$`next`
     checkpoint <- list(
-      last_success_timestamp = last_success_timestamp,
       records_fetched = records_fetched,
       total_records = total_records
     )
@@ -209,8 +302,17 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     }
     saveRDS(checkpoint, checkpoint_path)
 
+    # 3. Save the progress after complete download
     if (is.null(url)) {
       message("Download complete. Finalizing...")
+      final_checkpoint <- list(
+        last_success_timestamp = as.character(as.integer(Sys.time())),
+        records_fetched = records_fetched,
+        total_records = total_records,
+        next_url = NULL
+      )
+      saveRDS(final_checkpoint, checkpoint_path)
+      message("Checkpoint saved for next incremental run.")
       break
     }
 
@@ -219,6 +321,127 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
   }
 
   # Return the data from the file
+  data.table::fread(filename)
+}
+
+#' Fetch Paginated Literature Observations and Save/Resume using Timestamp
+#'
+#' Resumes the download from the last successfully fetched record's timestamp.
+#'
+#' @param base_url Base URL of the API.
+#' @param token JWT authorization token.
+#' @param filename Character string for the path to save the final data
+#' (e.g., "literature_observations.csv").
+#' @keywords internal
+#' @export
+get_literature_observations <- function(base_url, token, filename = NULL) {
+
+  if (is.null(filename)) {
+    base_dir <- get_storage_path()
+    filename <- file.path(base_dir, "biologer_literature_observations.csv")
+  }
+
+  checkpoint_path <- paste0(filename, ".checkpoint.rds")
+  base_api_url <- paste0(base_url, "/literature-observations")
+
+  last_success_timestamp <- "0"
+  records_fetched <- 0
+  total_records <- NULL
+
+  if (file.exists(checkpoint_path)) {
+    checkpoint <- readRDS(checkpoint_path)
+    if (!is.null(checkpoint$next_url)) {
+      # Resuming interrupted fetch
+      url <- set_per_page(checkpoint$next_url, per.page = 1000)
+      records_fetched <- checkpoint$records_fetched
+      total_records <- checkpoint$total_records
+      message(paste0("Resuming interrupted paginated fetch from: ", url))
+    } else {
+      # Starting an Incremental Fetch
+      last_success_timestamp <- checkpoint$last_success_timestamp
+      url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+      records_fetched <- 0
+      total_records <- NULL
+      message(paste0("Starting incremental fetch after timestamp: ", url))
+    }
+  } else {
+    # Initial Full Download
+    url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+    message("Starting initial full fetch from URL: ", url)
+  }
+
+  repeat {
+    if (is.null(url)) break
+
+    h <- curl::new_handle()
+    curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
+    result <- curl::curl_fetch_memory(url, handle = h)
+
+    if (result$status_code %in% c(429, 503)) {
+      wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
+      message("Server returned ", result$status_code, ". Waiting ", round(wait, 1), " seconds before retry...")
+      Sys.sleep(wait)
+      next
+    }
+    if (result$status_code != 200) {
+      warning(paste("Failed to fetch page, code:", result$status_code))
+      break
+    }
+
+    data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
+
+    if (is.null(total_records)) {
+      total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
+      if (!is.null(total_records))
+        message("Total records to fetch: ", format(total_records, big.mark = ","))
+    }
+    current_count <- nrow(data$data)
+    records_fetched <- records_fetched + current_count
+
+    # Display progress
+    display_progress(records_fetched = records_fetched, total_records = total_records)
+
+    # 1. Save the data
+    current_page_data <- data$data
+    columns_to_select <- intersect(LITERATURE_OBSERVATION_COLUMNS, names(current_page_data))
+    current_page_data <- current_page_data[, columns_to_select]
+
+    # Process the 'publication.authors' column
+    if ("publication.authors" %in% names(current_page_data) && is.list(current_page_data$publication.authors)) {
+      current_page_data$publication.authors <- unlist(lapply(current_page_data$publication.authors, format_authors))
+    }
+
+    data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
+
+    # 2. Save the progress
+    url <- data$links$`next`
+    checkpoint <- list(
+      records_fetched = records_fetched,
+      total_records = total_records
+    )
+    if (!is.null(url)) {
+      checkpoint$next_url <- url
+    }
+    saveRDS(checkpoint, checkpoint_path)
+
+    # 3. Save the progress after complete download
+    if (is.null(url)) {
+      message("Download complete. Finalizing...")
+      final_checkpoint <- list(
+        last_success_timestamp = as.character(as.integer(Sys.time())),
+        records_fetched = records_fetched,
+        total_records = total_records,
+        next_url = NULL
+      )
+      saveRDS(final_checkpoint, checkpoint_path)
+      message("Checkpoint saved for next incremental run.")
+      break
+    }
+
+    url <- set_per_page(url, per.page = 1000)
+    Sys.sleep(0.5)
+  }
+
   data.table::fread(filename)
 }
 
@@ -237,6 +460,7 @@ get_biologer_data <- function(filename = NULL) {
   token <- get_biologer_token()
 
   get_public_field_observations(base_url, token, filename)
+  get_literature_observations(base_url, token, filename)
 }
 
 #' Open Biologer Data
