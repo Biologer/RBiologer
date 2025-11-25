@@ -2,7 +2,7 @@
 BIOLOGER_URLS <- c(
   "rs" = "https://biologer.rs/api",
   "hr" = "https://biologer.hr/api",
-  "bs" = "https://biologer.bs/api",
+  "ba" = "https://biologer.ba/api",
   "me" = "https://biologer.me/api"
 )
 
