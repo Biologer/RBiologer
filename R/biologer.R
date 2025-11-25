@@ -385,65 +385,74 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
   message("The data is saved locally in ", filename)
 }
 
-#' Main function used to get data from Biologer server
+#' Main function used to get data from all logged-in Biologer servers
+#'
+#' @description This function iterates through all servers for which credentials 
+#' are stored and downloads field observations, literature observations, and 
+#' taxonomic data for each active server.
 #'
 #' @export
 get_biologer_data <- function() {
-  if (Sys.getenv("BIOLOGER_TOKEN") == "") {
-    stop("You must be logged in Biologer server to use RBiologer package.
-      Use the function 'biologer_login(token, server)' for this purpose.", call. = FALSE)
+  tokens <- get_biologer_token()
+  urls <- get_biologer_base_url()
+
+  active_servers <- intersect(names(tokens), names(urls))
+  if (length(active_servers) == 0) {
+    stop("No active server credentials found. Please use 'biologer_login(server, token)' ",
+         "for at least one server.", call. = FALSE)
   }
 
-  # Get field observation data from Biologer
-  message("* Step 1/3: Downloading Field Observation data.")
-  get_data_from_api(
-    api_url = paste0(get_biologer_base_url(), "/public-field-observations"),
-    token = get_biologer_token(),
-    filename = file.path(get_storage_path(), "biologer_field_observations.csv"),
-    columns_to_keep = c(
-      "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
-      "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",
-      "stage_id", "number", "note", "project", "habitat", "found_on", "found_dead",
-      "found_dead_note", "data_license", "time", "status", "types", "dataset", "atlas_code",
-      "timed_count_id",
-      "taxon.id", "taxon.name", "taxon.rank",
-      "observed_by.id", "identified_by.id"
-    )
-  )
+  storage_path <- get_storage_path()
 
-  # Get Literature data from Biologer
-  message("* Step 2/3: Downloading Literature Observation data.")
-  get_data_from_api(
-    api_url = paste0(get_biologer_base_url(), "/literature-observations"),
-    token = get_biologer_token(),
-    filename = file.path(get_storage_path(), "biologer_literature_observations.csv"),
-    columns_to_keep = c(
-      "id", "year", "month", "day", "elevation", "minimum_elevation",
-      "maximum_elevation", "latitude", "longitude", "mgrs10k", "location",
-      "accuracy", "georeferenced_by", "georeferenced_date", "observer", "identifier",
-      "note", "sex", "number", "project", "found_on", "habitat", "stage_id",
-      "time", "dataset", "is_original_data", "cited_publication_id",
-      "place_where_referenced_in_publication", "original_date", "original_locality",
-      "original_elevation", "original_coordinates", "original_identification",
-      "original_identification_validity", "other_original_data", "collecting_start_year",
-      "collecting_start_month", "collecting_end_year", "collecting_end_month",
-      "taxon.id", "taxon.name", "taxon.rank",
-      "publication.id", "publication.year", "publication.authors"
-    )
-  )
+  for (server_key in active_servers) {
 
-  # Get Literature data from Biologer
-  message("* Step 3/3: Downloading Taxonomic data.")
-  get_data_from_api(
-    api_url = paste0(get_biologer_base_url(), "/taxa"),
-    token = get_biologer_token(),
-    filename = file.path(get_storage_path(), "biologer_taxa.csv"),
-    columns_to_keep = c(
-      "id", "parent_id", "name", "rank", "rank_level", "author", "restricted",
-      "allochthonous", "invasive", "uses_atlas_codes", "ancestors_names",
-      "translations", "stages", "synonyms"
+    server_url <- urls[server_key]
+    server_token <- tokens[server_key]
+    server_display <- toupper(server_key)
+
+    message("\n========================================================")
+    message(paste0("  STARTING DATA DOWNLOAD FOR SERVER: ", server_display))
+    message("========================================================\n")
+
+    # File suffix is now server-specific (e.g., _rs.csv)
+    file_suffix <- paste0("_", server_key, ".csv")
+
+    # --- Step 1/3: Downloading Field Observation data ---
+    message(paste0("* Step 1/3 [", server_display, "]: Downloading Field Observation data."))
+    get_data_from_api(
+      api_url = paste0(server_url, "/public-field-observations"),
+      token = server_token,
+      # Server-specific filename
+      filename = file.path(storage_path, paste0("biologer_field_observations", file_suffix)),
+      columns_to_keep = FIELD_OBS_COLUMNS
     )
-  )
+
+    # --- Step 2/3: Downloading Literature Observation data ---
+    message(paste0("* Step 2/3 [", server_display, "]: Downloading Literature Observation data."))
+    get_data_from_api(
+      api_url = paste0(server_url, "/literature-observations"),
+      token = server_token,
+      # Server-specific filename
+      filename = file.path(storage_path, paste0("biologer_literature_observations", file_suffix)),
+      columns_to_keep = LITERATURE_OBS_COLUMNS
+    )
+
+    # --- Step 3/3: Downloading Taxonomic data ---
+    message(paste0("* Step 3/3 [", server_display, "]: Downloading Taxonomic data."))
+    get_data_from_api(
+      api_url = paste0(server_url, "/taxa"),
+      token = server_token,
+      # Server-specific filename
+      filename = file.path(storage_path, paste0("biologer_taxa", file_suffix)),
+      columns_to_keep = TAXA_COLUMNS
+    )
+  }
+
+  message("\n--------------------------------------------------------")
+  message("All data downloads and consolidations complete.")
+  message("--------------------------------------------------------")
+
+  invisible(TRUE)
 }
 
 #' Open Biologer Data

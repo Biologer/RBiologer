@@ -2,10 +2,12 @@
 % Please edit documentation in R/biologer.R
 \name{get_biologer_data}
 \alias{get_biologer_data}
-\title{Main function used to get data from Biologer server}
+\title{Main function used to get data from all logged-in Biologer servers}
 \usage{
 get_biologer_data()
 }
 \description{
-Main function used to get data from Biologer server
+This function iterates through all servers for which credentials
+are stored and downloads field observations, literature observations, and
+taxonomic data for each active server.
 }
