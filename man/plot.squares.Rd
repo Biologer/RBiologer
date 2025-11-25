@@ -94,7 +94,7 @@ my_data <- data.frame(
   taxon.name = c("Species A", "Species B"),
   longitude  = c(16.0, 15.5),
   latitude   = c(45.8, 45.9),
-  shape_col  = c("Circle", "Triangle")  # Example shape column
+  shape_col  = c("Circle", "Triangle") # Example shape column
 )
 
 # Plot single 10×10 km square with shape

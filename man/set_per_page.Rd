@@ -4,7 +4,7 @@
 \alias{set_per_page}
 \title{Set or Update the 'per_page' Query Parameter in a URL}
 \usage{
-set_per_page(url, per.page = 1000)
+set_per_page(url, per.page = 500)
 }
 \arguments{
 \item{url}{A character string representing the URL to be modified.

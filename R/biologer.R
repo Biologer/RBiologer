@@ -22,7 +22,9 @@ NULL
 #'   Returns \code{NULL} if the input \code{url} is \code{NULL}.
 #' @keywords internal
 set_per_page <- function(url, per.page = 1000) {
-  if (is.null(url)) return(NULL)
+  if (is.null(url)) {
+    return(NULL)
+  }
 
   per_page_str <- as.character(per.page)
   pattern <- "per_page=[0-9]+"
@@ -53,30 +55,6 @@ get_fetch_start_url <- function(base_api_url, last_timestamp) {
   URLencode(url)
 }
 
-FIELD_OBSERVATION_COLUMNS <- c(
-  "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
-  "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",
-  "stage_id", "number", "note", "project", "habitat", "found_on", "found_dead",
-  "found_dead_note", "data_license", "time", "status", "types", "dataset", "atlas_code",
-  "timed_count_id",
-  "taxon.id", "taxon.name", "taxon.rank",
-  "observed_by.id", "identified_by.id"
-)
-
-LITERATURE_OBSERVATION_COLUMNS <- c(
-  "id", "year", "month", "day", "elevation", "minimum_elevation",
-  "maximum_elevation", "latitude", "longitude", "mgrs10k", "location",
-  "accuracy", "georeferenced_by", "georeferenced_date", "observer", "identifier",
-  "note", "sex", "number", "project", "found_on", "habitat", "stage_id",
-  "time", "dataset", "is_original_data", "cited_publication_id",
-  "place_where_referenced_in_publication", "original_date", "original_locality",
-  "original_elevation", "original_coordinates", "original_identification",
-  "original_identification_validity", "other_original_data", "collecting_start_year",
-  "collecting_start_month", "collecting_end_year", "collecting_end_month",
-  "taxon.id", "taxon.name", "taxon.rank",
-  "publication.id", "publication.year", "publication.authors"
-)
-
 #' Collapse nested 'types' data frame into a semicolon-separated string of names.
 #' @param type_df A data frame containing 'name' column, or an empty list/data frame.
 #' @keywords internal
@@ -99,13 +77,61 @@ collapse_photo_urls <- function(photos_df) {
   }
 }
 
+#' Collapse nested 'translations' data frame into a semicolon-separated string of locale=name pairs.
+#' @param translations_df A data frame containing 'locale' and 'native_name' columns, or an empty list/data frame.
+#' @keywords internal
+collapse_translations <- function(translations_df) {
+  if (is.null(translations_df) || !is.data.frame(translations_df) || nrow(translations_df) == 0) {
+    return(NA_character_)
+  }
+
+  valid_translations <- translations_df[
+    !is.na(translations_df$native_name) & translations_df$native_name != "",
+    c("locale", "native_name")
+  ]
+
+  if (nrow(valid_translations) == 0) {
+    return(NA_character_)
+  }
+
+  translated_pairs <- paste0(
+    valid_translations$locale,
+    "=",
+    valid_translations$native_name
+  )
+
+  paste(translated_pairs, collapse = ";")
+}
+
+#' Collapse nested 'stages' data frame into a semicolon-separated string of stage names.
+#' @param stages_df A data frame containing 'name' column, or an empty list/data frame.
+#' @keywords internal
+collapse_stages <- function(stages_df) {
+  if (is.data.frame(stages_df) && nrow(stages_df) > 0 && "name" %in% names(stages_df)) {
+    paste(stages_df$name, collapse = "; ")
+  } else {
+    ""
+  }
+}
+
+#' Collapse nested 'synonyms' data frame into a semicolon-separated string of names.
+#' @param synonyms_df A data frame containing synonym names, or an empty list/data frame.
+#' @return A character string of collapsed synonym names, or an empty string if missing.
+#' @keywords internal
+collapse_synonyms <- function(synonyms_df) {
+  if (is.data.frame(synonyms_df) && nrow(synonyms_df) > 0 && "name" %in% names(synonyms_df)) {
+    paste(synonyms_df$name, collapse = "; ")
+  } else {
+    ""
+  }
+}
+
 #' Formats a list of publication authors into a standard citation string.
 #'
 #' @param authors_list A list column element containing a data frame of authors
 #'   with 'last_name' and 'first_name' columns.
 #' @keywords internal
 format_authors <- function(authors_list) {
-
   # 1. Handle empty cases
   if (!is.data.frame(authors_list) || nrow(authors_list) == 0) {
     return("")
@@ -143,7 +169,6 @@ format_authors <- function(authors_list) {
 #' @param current_count The number of records fetched in the current page (optional, for debugging).
 #' @keywords internal
 display_progress <- function(records_fetched, total_records) {
-
   # Only run dynamic update in an interactive session
   if (interactive()) {
     output_string <- "\r" # Carriage return to overwrite the current line
@@ -168,7 +193,6 @@ display_progress <- function(records_fetched, total_records) {
     }
 
     cat(output_string) # Print the string without a newline
-
   } else {
     # Fallback for non-interactive sessions (e.g., Rscript)
     # We use message() here to ensure output is captured in logs/standard out.
@@ -192,46 +216,42 @@ display_progress <- function(records_fetched, total_records) {
 #'
 #' @param filename Character string for the path to save the final data
 #' (e.g., "observations.csv").
-#' @param base_url Base URL of the API.
+#' @param api_url URL of the Biologer API used to access the data.
 #' @param token JWT authorization token.
+#' @param columns_to_keep Select columns to keep in the final dataset. Server
+#' will return many columns, which are not required for R Biologer package to work.
 #' @keywords internal
 #' @export
-get_public_field_observations <- function(base_url, token, filename = NULL) {
-
-  # Set the default file name
+get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) {
   if (is.null(filename)) {
-    base_dir <- get_storage_path()
-    filename <- file.path(base_dir, "biologer_field_observations.csv")
+    message("Due to its size, data should be saved into a file. Please provide CSV file for saving data.")
+    break
   }
 
   checkpoint_path <- paste0(filename, ".checkpoint.rds")
-  base_api_url <- paste0(base_url, "/public-field-observations")
-
   last_success_timestamp <- "0"
   records_fetched <- 0
   total_records <- NULL
 
   if (file.exists(checkpoint_path)) {
-
     checkpoint <- readRDS(checkpoint_path)
-
     if (!is.null(checkpoint$next_url)) {
       # Check if the last run was interrupted
-      url <- set_per_page(checkpoint$next_url, per.page = 1000)
+      url <- set_per_page(url = checkpoint$next_url)
       records_fetched <- checkpoint$records_fetched
       total_records <- checkpoint$total_records
       message(paste0("Resuming interrupted paginated fetch from: ", url))
     } else {
       # Starting an Incremental Fetch (previous run completed successfully)
       last_success_timestamp <- checkpoint$last_success_timestamp
-      url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+      url <- get_fetch_start_url(api_url, last_success_timestamp)
       records_fetched <- 0
       total_records <- NULL
       message(paste0("Starting incremental fetch after timestamp: ", last_success_timestamp))
     }
   } else {
     # Initial Full Download
-    url <- get_fetch_start_url(base_api_url, last_success_timestamp)
+    url <- get_fetch_start_url(api_url, last_success_timestamp)
     message("Starting initial full fetch from URL: ", url)
   }
 
@@ -246,15 +266,17 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     if (result$status_code %in% c(429, 503)) {
       # Exponential backoff for 503
       wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
-      message("Server returned ", result$status_code, ". Waiting ",
-              round(wait, 1), " seconds before retry...")
+      message(
+        "Server returned ", result$status_code, ". Waiting ",
+        round(wait, 1), " seconds before retry…"
+      )
       Sys.sleep(wait)
       next
     }
 
     # If the server return error code
     if (result$status_code != 200) {
-      warning(paste("Failed to fetch page, code:", result$status_code))
+      warning(paste("Failed to download page, error code:", result$status_code))
       break
     }
 
@@ -263,8 +285,14 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     # Extract total record count on first page
     if (is.null(total_records)) {
       total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
-      if (!is.null(total_records))
-        message("Total records to fetch: ", format(total_records, big.mark = ","))
+      if (!is.null(total_records)) {
+        if (total_records == 0) {
+          message("The data is already downloaded. No need to update…")
+          break
+        } else {
+          message("Total records to download: ", format(total_records, big.mark = ","))
+        }
+      }
     }
 
     # Add this page
@@ -275,141 +303,40 @@ get_public_field_observations <- function(base_url, token, filename = NULL) {
     display_progress(records_fetched = records_fetched, total_records = total_records)
 
     # 1. Save the data
-    current_page_data <- data$data
-    columns_to_select <- intersect(FIELD_OBSERVATION_COLUMNS, names(current_page_data))
-    current_page_data <- current_page_data[, columns_to_select]
+    current_page_data <- data$data # downloaded batch of data
 
+    # Define columns to keep in the final dataset
+    if (!is.null(columns_to_keep) && length(columns_to_keep) > 0) {
+      columns_to_select <- intersect(columns_to_keep, names(current_page_data))
+      current_page_data <- current_page_data[, columns_to_select]
+    }
+
+    # Some data is saved in a complex list. We need to process those before saving in
+    # simple CSV file.
     # Process the 'types' column
     if ("types" %in% names(current_page_data) && is.list(current_page_data$types)) {
       current_page_data$types <- unlist(lapply(current_page_data$types, collapse_types))
     }
-
     # Process the 'photos' column
     if ("photos" %in% names(current_page_data) && is.list(current_page_data$photos)) {
       current_page_data$photos <- unlist(lapply(current_page_data$photos, collapse_photo_urls))
     }
-
-    data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
-
-    # 2. Save the progress
-    url <- data$links$`next`
-    checkpoint <- list(
-      records_fetched = records_fetched,
-      total_records = total_records
-    )
-    if (!is.null(url)) {
-      checkpoint$next_url <- url
-    }
-    saveRDS(checkpoint, checkpoint_path)
-
-    # 3. Save the progress after complete download
-    if (is.null(url)) {
-      message("Download complete. Finalizing...")
-      final_checkpoint <- list(
-        last_success_timestamp = as.character(as.integer(Sys.time())),
-        records_fetched = records_fetched,
-        total_records = total_records,
-        next_url = NULL
-      )
-      saveRDS(final_checkpoint, checkpoint_path)
-      message("Checkpoint saved for next incremental run.")
-      break
-    }
-
-    url <- set_per_page(url, per.page = 1000)
-    Sys.sleep(0.5)
-  }
-
-  # Return the data from the file
-  data.table::fread(filename)
-}
-
-#' Fetch Paginated Literature Observations and Save/Resume using Timestamp
-#'
-#' Resumes the download from the last successfully fetched record's timestamp.
-#'
-#' @param base_url Base URL of the API.
-#' @param token JWT authorization token.
-#' @param filename Character string for the path to save the final data
-#' (e.g., "literature_observations.csv").
-#' @keywords internal
-#' @export
-get_literature_observations <- function(base_url, token, filename = NULL) {
-
-  if (is.null(filename)) {
-    base_dir <- get_storage_path()
-    filename <- file.path(base_dir, "biologer_literature_observations.csv")
-  }
-
-  checkpoint_path <- paste0(filename, ".checkpoint.rds")
-  base_api_url <- paste0(base_url, "/literature-observations")
-
-  last_success_timestamp <- "0"
-  records_fetched <- 0
-  total_records <- NULL
-
-  if (file.exists(checkpoint_path)) {
-    checkpoint <- readRDS(checkpoint_path)
-    if (!is.null(checkpoint$next_url)) {
-      # Resuming interrupted fetch
-      url <- set_per_page(checkpoint$next_url, per.page = 1000)
-      records_fetched <- checkpoint$records_fetched
-      total_records <- checkpoint$total_records
-      message(paste0("Resuming interrupted paginated fetch from: ", url))
-    } else {
-      # Starting an Incremental Fetch
-      last_success_timestamp <- checkpoint$last_success_timestamp
-      url <- get_fetch_start_url(base_api_url, last_success_timestamp)
-      records_fetched <- 0
-      total_records <- NULL
-      message(paste0("Starting incremental fetch after timestamp: ", url))
-    }
-  } else {
-    # Initial Full Download
-    url <- get_fetch_start_url(base_api_url, last_success_timestamp)
-    message("Starting initial full fetch from URL: ", url)
-  }
-
-  repeat {
-    if (is.null(url)) break
-
-    h <- curl::new_handle()
-    curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
-    result <- curl::curl_fetch_memory(url, handle = h)
-
-    if (result$status_code %in% c(429, 503)) {
-      wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
-      message("Server returned ", result$status_code, ". Waiting ", round(wait, 1), " seconds before retry...")
-      Sys.sleep(wait)
-      next
-    }
-    if (result$status_code != 200) {
-      warning(paste("Failed to fetch page, code:", result$status_code))
-      break
-    }
-
-    data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
-
-    if (is.null(total_records)) {
-      total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
-      if (!is.null(total_records))
-        message("Total records to fetch: ", format(total_records, big.mark = ","))
-    }
-    current_count <- nrow(data$data)
-    records_fetched <- records_fetched + current_count
-
-    # Display progress
-    display_progress(records_fetched = records_fetched, total_records = total_records)
-
-    # 1. Save the data
-    current_page_data <- data$data
-    columns_to_select <- intersect(LITERATURE_OBSERVATION_COLUMNS, names(current_page_data))
-    current_page_data <- current_page_data[, columns_to_select]
-
     # Process the 'publication.authors' column
     if ("publication.authors" %in% names(current_page_data) && is.list(current_page_data$publication.authors)) {
       current_page_data$publication.authors <- unlist(lapply(current_page_data$publication.authors, format_authors))
     }
+    # Process the 'translations' column
+    if ("translations" %in% names(current_page_data) && is.list(current_page_data$translations)) {
+      current_page_data$translations <- unlist(lapply(current_page_data$translations, collapse_translations))
+    }
+    # Process the 'stages' column
+    if ("stages" %in% names(current_page_data) && is.list(current_page_data$stages)) {
+      current_page_data$stages <- unlist(lapply(current_page_data$stages, collapse_stages))
+    }
+    # Process the 'synonyms' column
+    if ("synonyms" %in% names(current_page_data) && is.list(current_page_data$synonyms)) {
+      current_page_data$synonyms <- unlist(lapply(current_page_data$synonyms, collapse_synonyms))
+    }
 
     data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
 
@@ -424,9 +351,9 @@ get_literature_observations <- function(base_url, token, filename = NULL) {
     }
     saveRDS(checkpoint, checkpoint_path)
 
-    # 3. Save the progress after complete download
+    # 3. Stop and save the progress after complete download
     if (is.null(url)) {
-      message("Download complete. Finalizing...")
+      message("Download complete. Finalizing…")
       final_checkpoint <- list(
         last_success_timestamp = as.character(as.integer(Sys.time())),
         records_fetched = records_fetched,
@@ -438,29 +365,85 @@ get_literature_observations <- function(base_url, token, filename = NULL) {
       break
     }
 
-    url <- set_per_page(url, per.page = 1000)
-    Sys.sleep(0.5)
+    url <- set_per_page(url = url)
+    #Sys.sleep(0.5)
   }
 
-  data.table::fread(filename)
+  # Remove duplicated entries (only keep the new ones)
+  if (file.exists(filename)) {
+    full_data <- data.table::fread(filename, fill = TRUE)
+    is_duplicate <- duplicated(full_data$id, fromLast = TRUE)
+    final_data <- full_data[!is_duplicate, ]
+    if (nrow(full_data) > nrow(final_data)) {
+      message("Removing duplicated data to keep the new online changes. ",
+              "Total rows before: ", nrow(full_data), "; after: ",
+              nrow(final_data))
+      data.table::fwrite(final_data, file = filename)
+    }
+  }
+
+  message("The data is saved locally in ", filename)
 }
 
 #' Main function used to get data from Biologer server
 #'
-#' @param filename Character string for the path to save the final data
-#' (e.g., "observations.csv"). Set to NULL to use default R location.
 #' @export
-get_biologer_data <- function(filename = NULL) {
+get_biologer_data <- function() {
   if (Sys.getenv("BIOLOGER_TOKEN") == "") {
     stop("You must be logged in Biologer server to use RBiologer package.
       Use the function 'biologer_login(token, server)' for this purpose.", call. = FALSE)
   }
 
-  base_url <- get_biologer_base_url()
-  token <- get_biologer_token()
+  # Get field observation data from Biologer
+  message("* Step 1/3: Downloading Field Observation data.")
+  get_data_from_api(
+    api_url = paste0(get_biologer_base_url(), "/public-field-observations"),
+    token = get_biologer_token(),
+    filename = file.path(get_storage_path(), "biologer_field_observations.csv"),
+    columns_to_keep = c(
+      "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
+      "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",
+      "stage_id", "number", "note", "project", "habitat", "found_on", "found_dead",
+      "found_dead_note", "data_license", "time", "status", "types", "dataset", "atlas_code",
+      "timed_count_id",
+      "taxon.id", "taxon.name", "taxon.rank",
+      "observed_by.id", "identified_by.id"
+    )
+  )
 
-  get_public_field_observations(base_url, token, filename)
-  get_literature_observations(base_url, token, filename)
+  # Get Literature data from Biologer
+  message("* Step 2/3: Downloading Literature Observation data.")
+  get_data_from_api(
+    api_url = paste0(get_biologer_base_url(), "/literature-observations"),
+    token = get_biologer_token(),
+    filename = file.path(get_storage_path(), "biologer_literature_observations.csv"),
+    columns_to_keep = c(
+      "id", "year", "month", "day", "elevation", "minimum_elevation",
+      "maximum_elevation", "latitude", "longitude", "mgrs10k", "location",
+      "accuracy", "georeferenced_by", "georeferenced_date", "observer", "identifier",
+      "note", "sex", "number", "project", "found_on", "habitat", "stage_id",
+      "time", "dataset", "is_original_data", "cited_publication_id",
+      "place_where_referenced_in_publication", "original_date", "original_locality",
+      "original_elevation", "original_coordinates", "original_identification",
+      "original_identification_validity", "other_original_data", "collecting_start_year",
+      "collecting_start_month", "collecting_end_year", "collecting_end_month",
+      "taxon.id", "taxon.name", "taxon.rank",
+      "publication.id", "publication.year", "publication.authors"
+    )
+  )
+
+  # Get Literature data from Biologer
+  message("* Step 3/3: Downloading Taxonomic data.")
+  get_data_from_api(
+    api_url = paste0(get_biologer_base_url(), "/taxa"),
+    token = get_biologer_token(),
+    filename = file.path(get_storage_path(), "biologer_taxa.csv"),
+    columns_to_keep = c(
+      "id", "parent_id", "name", "rank", "rank_level", "author", "restricted",
+      "allochthonous", "invasive", "uses_atlas_codes", "ancestors_names",
+      "translations", "stages", "synonyms"
+    )
+  )
 }
 
 #' Open Biologer Data
@@ -479,15 +462,18 @@ open.data <- function(path = "biologer_data.csv", verbose = TRUE) {
   }
 
   # Read the CSV into a dataframe
-  df <- tryCatch({
-    readr::read_csv(
-      path,
-      locale = readr::locale(encoding = "UTF-8"),
-      show_col_types = FALSE # Suppress column spec messages
-    )
-  }, error = function(e) {
-    stop("Failed to read the file: ", e$message)
-  })
+  df <- tryCatch(
+    {
+      readr::read_csv(
+        path,
+        locale = readr::locale(encoding = "UTF-8"),
+        show_col_types = FALSE # Suppress column spec messages
+      )
+    },
+    error = function(e) {
+      stop("Failed to read the file: ", e$message)
+    }
+  )
 
   # Log success message if verbose is TRUE
   if (verbose) {
@@ -497,7 +483,6 @@ open.data <- function(path = "biologer_data.csv", verbose = TRUE) {
 
   return(df)
 }
-
 
 
 #' Subset Biologer Data
@@ -760,7 +745,7 @@ zupanije.biologer <- function(fill = "taxon.name", df, selected_zupanije = NULL)
     counts <- joined_data %>%
       group_by(name) %>%
       summarise(count = n(), .groups = "drop") %>%
-      mutate(!!fill := "ALL")  # Add a default "ALL" column when no grouping
+      mutate(!!fill := "ALL") # Add a default "ALL" column when no grouping
   } else {
     counts <- joined_data %>%
       group_by(!!sym(fill), name) %>%
@@ -902,10 +887,10 @@ plot.zupanije <- function(fill = "taxon.name", shape = NULL, zupanija, df,
   return(p)
 }
 
-####################################3
+#################################### 3
 #' Plot Observations Within a Polygon
 #'
-#' This function plots observations within a user-defined polygon, 
+#' This function plots observations within a user-defined polygon,
 #' providing both a detailed plot with observations and a location overview.
 #'
 #' @param fill Column name for coloring points. Default is "taxon.name".
@@ -1050,8 +1035,7 @@ plot.polygon <- function(fill = "taxon.name",
   } else if (is.character(palette) && length(palette) == 1) {
     # One of the predefined palettes
     n <- length(unique_fill)
-    colors <- switch(
-      palette,
+    colors <- switch(palette,
       "viridis" = viridis::viridis(n),
       "plasma"  = viridis::plasma(n),
       "rainbow" = rainbow(n),
@@ -1065,20 +1049,26 @@ plot.polygon <- function(fill = "taxon.name",
 
   # Main plot (with points)
   plot_main <- ggplot() +
-    geom_sf(data = map_layer,
-            fill = layer_fill_color,
-            color = layer_border_color,
-            linewidth = layer_border_width) +
-    geom_sf(data = polygons_sf,
-            fill = polygon_fill_color,
-            color = polygon_border_color,
-            linewidth = polygon_border_width) +
+    geom_sf(
+      data = map_layer,
+      fill = layer_fill_color,
+      color = layer_border_color,
+      linewidth = layer_border_width
+    ) +
+    geom_sf(
+      data = polygons_sf,
+      fill = polygon_fill_color,
+      color = polygon_border_color,
+      linewidth = polygon_border_width
+    ) +
     # Only add geom_sf for points if we have any
     {
       if (nrow(points_in_poly) > 0) {
-        geom_sf(data = points_in_poly,
-                aes_string(color = fill, shape = shape),
-                size = dot_size)
+        geom_sf(
+          data = points_in_poly,
+          aes_string(color = fill, shape = shape),
+          size = dot_size
+        )
       }
     } +
     {
@@ -1098,14 +1088,18 @@ plot.polygon <- function(fill = "taxon.name",
 
   # Location overview plot (just the polygons and the chosen layer)
   plot_location <- ggplot() +
-    geom_sf(data = map_layer,
-            fill = layer_fill_color,
-            color = layer_border_color,
-            linewidth = layer_border_width) +
-    geom_sf(data = polygons_sf,
-            fill = polygon_fill_color,
-            color = polygon_border_color,
-            linewidth = polygon_border_width) +
+    geom_sf(
+      data = map_layer,
+      fill = layer_fill_color,
+      color = layer_border_color,
+      linewidth = layer_border_width
+    ) +
+    geom_sf(
+      data = polygons_sf,
+      fill = polygon_fill_color,
+      color = polygon_border_color,
+      linewidth = polygon_border_width
+    ) +
     coord_sf() +
     labs(title = "Polygon Location Overview") +
     theme_minimal()
@@ -1116,7 +1110,6 @@ plot.polygon <- function(fill = "taxon.name",
     polygon_location = plot_location
   ))
 }
-
 
 
 #' Count Observations Per Polygon
@@ -1181,7 +1174,7 @@ polygon.counts <- function(fill = "taxon.name", polygon_coords, polygon_names = 
     counts <- joined_data %>%
       group_by(name) %>%
       summarise(count = n(), .groups = "drop") %>%
-      mutate(!!fill := "ALL")  # Add a default "ALL" column when no grouping
+      mutate(!!fill := "ALL") # Add a default "ALL" column when no grouping
   } else {
     counts <- joined_data %>%
       group_by(!!sym(fill), name) %>%
@@ -1207,13 +1200,6 @@ polygon.counts <- function(fill = "taxon.name", polygon_coords, polygon_names = 
   print(final_counts)
   return(final_counts)
 }
-
-
-
-
-
-
-
 
 
 ###############################################################
@@ -1263,7 +1249,7 @@ polygon.counts <- function(fill = "taxon.name", polygon_coords, polygon_names = 
 #'   taxon.name = c("Species A", "Species B"),
 #'   longitude  = c(16.0, 15.5),
 #'   latitude   = c(45.8, 45.9),
-#'   shape_col  = c("Circle", "Triangle")  # Example shape column
+#'   shape_col  = c("Circle", "Triangle") # Example shape column
 #' )
 #'
 #' # Plot single 10×10 km square with shape
@@ -1443,8 +1429,7 @@ plot.squares <- function(fill = "taxon.name",
   } else if (is.character(palette) && length(palette) == 1) {
     # A known palette name
     n <- length(unique_fill)
-    colors <- switch(
-      palette,
+    colors <- switch(palette,
       "viridis" = viridis::viridis(n),
       "plasma"  = viridis::plasma(n),
       "rainbow" = rainbow(n),
@@ -1466,28 +1451,36 @@ plot.squares <- function(fill = "taxon.name",
 
   # Start the plot with the base layer (map + grid squares)
   plot_main <- ggplot() +
-    geom_sf(data = map_layer,
-            fill = layer_fill_color,
-            color = layer_border_color,
-            linewidth = layer_border_width) +
-    geom_sf(data = grid_layer,
-            fill = grid_fill_color,
-            color = grid_border_color,
-            linewidth = grid_border_width)
+    geom_sf(
+      data = map_layer,
+      fill = layer_fill_color,
+      color = layer_border_color,
+      linewidth = layer_border_width
+    ) +
+    geom_sf(
+      data = grid_layer,
+      fill = grid_fill_color,
+      color = grid_border_color,
+      linewidth = grid_border_width
+    )
 
   # If there are any points within the squares, add them
   if (have_points) {
     if (shape_is_valid) {
       plot_main <- plot_main +
-        geom_sf(data = points_in_grid,
-                aes_string(color = fill, shape = shape),
-                size = dot_size)
+        geom_sf(
+          data = points_in_grid,
+          aes_string(color = fill, shape = shape),
+          size = dot_size
+        )
     } else {
       # shape column doesn't exist => color only
       plot_main <- plot_main +
-        geom_sf(data = points_in_grid,
-                aes_string(color = fill),
-                size = dot_size)
+        geom_sf(
+          data = points_in_grid,
+          aes_string(color = fill),
+          size = dot_size
+        )
     }
     # scale_color_manual for fill
     if (length(unique_fill) > 0) {
@@ -1511,14 +1504,18 @@ plot.squares <- function(fill = "taxon.name",
   # 9) Build the location overview (no points, just squares & map)
   #------------------------------------------------------------------------
   plot_location <- ggplot() +
-    geom_sf(data = map_layer,
-            fill = layer_fill_color,
-            color = layer_border_color,
-            linewidth = layer_border_width) +
-    geom_sf(data = grid_layer,
-            fill = grid_fill_color,
-            color = grid_border_color,
-            linewidth = grid_border_width) +
+    geom_sf(
+      data = map_layer,
+      fill = layer_fill_color,
+      color = layer_border_color,
+      linewidth = layer_border_width
+    ) +
+    geom_sf(
+      data = grid_layer,
+      fill = grid_fill_color,
+      color = grid_border_color,
+      linewidth = grid_border_width
+    ) +
     coord_sf() +
     labs(title = "Selected Square(s) Location Overview") +
     theme_minimal()
@@ -1531,8 +1528,6 @@ plot.squares <- function(fill = "taxon.name",
     square_location  = plot_location
   ))
 }
-
-
 
 
 ########################################
@@ -1581,7 +1576,7 @@ plot.squares <- function(fill = "taxon.name",
 #' all_1km_counts <- squares.count(
 #'   fill      = "taxon.name",
 #'   grid_type = "1km",
-#'   square_id = NULL,   # all squares
+#'   square_id = NULL, # all squares
 #'   df        = obs
 #' )
 #'
@@ -1650,7 +1645,7 @@ squares.count <- function(fill = "taxon.name",
     counts <- joined_data %>%
       group_by(cellcode) %>%
       summarise(count = n(), .groups = "drop") %>%
-      mutate(!!fill := "ALL")  # add a filler column for uniform structure
+      mutate(!!fill := "ALL") # add a filler column for uniform structure
   } else {
     # Group by the specified fill column + the square cellcode
     counts <- joined_data %>%

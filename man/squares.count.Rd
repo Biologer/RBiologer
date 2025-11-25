@@ -58,7 +58,7 @@ grid_counts <- squares.count(
 all_1km_counts <- squares.count(
   fill      = "taxon.name",
   grid_type = "1km",
-  square_id = NULL,   # all squares
+  square_id = NULL, # all squares
   df        = obs
 )
 

@@ -4,11 +4,7 @@
 \alias{get_biologer_data}
 \title{Main function used to get data from Biologer server}
 \usage{
-get_biologer_data(filename = NULL)
-}
-\arguments{
-\item{filename}{Character string for the path to save the final data
-(e.g., "observations.csv"). Set to NULL to use default R location.}
+get_biologer_data()
 }
 \description{
 Main function used to get data from Biologer server
