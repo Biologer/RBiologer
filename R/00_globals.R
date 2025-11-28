@@ -10,9 +10,9 @@ FIELD_OBS_COLUMNS <- c(
   "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
   "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",
   "stage_id", "number", "note", "project", "habitat", "found_on", "found_dead",
-  "found_dead_note", "data_license", "time", "status", "types", "dataset", "atlas_code",
+  "found_dead_note", "time", "status", "types", "dataset", "atlas_code",
   "timed_count_id",
-  "taxon.id", "taxon.name", "taxon.rank",
+  "taxon.id",
   "observed_by.id", "identified_by.id"
 )
 
@@ -26,7 +26,7 @@ LITERATURE_OBS_COLUMNS <- c(
   "original_elevation", "original_coordinates", "original_identification",
   "original_identification_validity", "other_original_data", "collecting_start_year",
   "collecting_start_month", "collecting_end_year", "collecting_end_month",
-  "taxon.id", "taxon.name", "taxon.rank",
+  "taxon.id",
   "publication.id", "publication.year", "publication.authors"
 )
 

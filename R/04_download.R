@@ -1,6 +1,6 @@
-#' @import httr
 #' @import jsonlite
-#' @import dplyr
+#' @import data.table
+#' @import curl
 #' @importFrom readr write_csv locale
 NULL
 
@@ -304,6 +304,7 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
 
     # 1. Save the data
     current_page_data <- data$data # downloaded batch of data
+    #print(colnames(current_page_data))
 
     # Define columns to keep in the final dataset
     if (!is.null(columns_to_keep) && length(columns_to_keep) > 0) {
@@ -387,8 +388,8 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
 
 #' Main function used to get data from all logged-in Biologer servers
 #'
-#' @description This function iterates through all servers for which credentials 
-#' are stored and downloads field observations, literature observations, and 
+#' @description This function iterates through all servers for which credentials
+#' are stored and downloads field observations, literature observations, and
 #' taxonomic data for each active server.
 #'
 #' @export

@@ -1,41 +1,102 @@
-#' Open Biologer Data
-#'
-#' Opens the Biologer data CSV file as a dataframe.
-#'
-#' @param path A character string specifying the path to the CSV file.
-#'             If NULL, defaults to the path used in `get.biologer.data()`.
-#' @param verbose Logical, whether to display messages about data loading. Defaults to TRUE.
-#' @return A dataframe containing the Biologer data.
+#' @title Load and Consolidate Biologer Data
+#' @description This function reads, joins, and consolidates observation (Field and
+#' Literature) and taxonomic data downloaded from one or more Biologer servers. It
+#' performs server-specific joins with taxonomy data and then merges all resulting
+#' observations into a single, comprehensive \code{data.table}.
+#' @param auto.download Logical. If \code{TRUE} (default), the function first calls
+#' \code{\link{get_biologer_data}()} to download the latest data from all configured
+#' Biologer servers before consolidation. If \code{FALSE}, it only loads existing
+#' files from the storage path.
+#' @return A single \code{data.table} containing all consolidated and merged observation
+#' records. This \code{data.table} includes columns from both Field and Literature
+#' observations, with non-matching columns filled with \code{NA}.
+#' @details The function performs the following steps:
+#' \enumerate{
+#'   \item For each active Biologer server, it reads three files: Taxonomy (\code{biologer_taxa}),
+#'         Field Observations (\code{biologer_field_observations}), and Literature Observations
+#'         (\code{biologer_literature_observations}).
+#'   \item It performs a left join (1:N) between the Observation dataframes and the Taxonomy
+#'         dataframe using \code{taxon.id} (Observation) and \code{id} (Taxonomy).
+#'   \item It uses \code{data.table::fread} for fast file reading and \code{data.table::rbindlist}
+#'         with \code{fill = TRUE} for fast and safe row-wise consolidation across different servers and
+#'         between the Field and Literature datasets.
+#' }
+#' @references Requires the \code{data.table} package.
+#' @seealso \code{\link{get_biologer_data}}, \code{\link{biologer_login}}
+#' @import data.table
 #' @export
-open.data <- function(path = "biologer_data.csv", verbose = TRUE) {
-  # Check if the file exists
-  if (!file.exists(path)) {
-    stop("The file does not exist at the specified path: ", path)
+open_data <- function(auto.download = TRUE) {
+
+  # Get new data from the servers
+  if (auto.download == TRUE) {
+    get_biologer_data()
   }
 
-  # Read the CSV into a dataframe
-  df <- tryCatch(
-    {
-      readr::read_csv(
-        path,
-        locale = readr::locale(encoding = "UTF-8"),
-        show_col_types = FALSE # Suppress column spec messages
-      )
-    },
-    error = function(e) {
-      stop("Failed to read the file: ", e$message)
+  storage_path <- get_storage_path()
+  active_servers <- intersect(names(get_biologer_token()), names(get_biologer_base_url()))
+
+  if (length(active_servers) == 0) {
+    stop("No active server credentials found. Cannot determine which files to load. 
+         Please use biologer_login() to add at least one Biologer server.", call. = FALSE)
+  }
+
+  all_field_data <- list()
+  all_literature_data <- list()
+
+  get_filename <- function(prefix, server_key) {
+    file.path(storage_path, paste0(prefix, "_", server_key, ".csv"))
+  }
+
+  message("========================================================")
+  message("  STARTING DATA CONSOLIDATION")
+  message("========================================================")
+
+  for (server_key in active_servers) {
+    server_display <- toupper(server_key)
+    message(paste0("\n* Processing server: ", server_display))
+
+    taxa_file <- get_filename("biologer_taxa", server_key)
+    field_file <- get_filename("biologer_field_observations", server_key)
+    literature_file <- get_filename("biologer_literature_observations", server_key)
+
+    if (!file.exists(taxa_file)) {
+      message(paste0("  - Skipping ", server_display, ": Taxonomic file is missing, use get_biologer_data()"))
+      next
     }
-  )
+    taxa_df <- data.table::fread(taxa_file, stringsAsFactors = FALSE, fill = TRUE)
 
-  # Log success message if verbose is TRUE
-  if (verbose) {
-    message("Data successfully loaded from: ", path)
-    message("Rows: ", nrow(df), ", Columns: ", ncol(df))
+    if (file.exists(field_file)) {
+      field_df <- data.table::fread(field_file, stringsAsFactors = FALSE, fill = TRUE)
+      message("  - Joining Field Observations with Taxonomy.")
+      field_merged <- field_df[taxa_df, on = c("taxon.id" = "id"), allow.cartesian = TRUE]
+      all_field_data[[server_key]] <- field_merged
+    } else {
+      message("  - Field Observations file is missing!!!")
+    }
+
+    if (file.exists(literature_file)) {
+      literature_df <- data.table::fread(literature_file, stringsAsFactors = FALSE, fill = TRUE)
+      message("  - Joining Literature Observations with Taxonomy.")
+      literature_merged <- literature_df[taxa_df, on = c("taxon.id" = "id"), allow.cartesian = TRUE]
+      all_literature_data[[server_key]] <- literature_merged
+    } else {
+      message("  - Literature Observations file is missing!!!")
+    }
   }
 
-  return(df)
-}
+  message("\n* Merging data from all the servers.")
+  merged_field_df <- data.table::rbindlist(all_field_data, fill = TRUE)
+  merged_literature_df <- data.table::rbindlist(all_literature_data, fill = TRUE)
 
+  message("\n* Final consolidation of Field and Literature data.")
+  final_dataset <- data.table::rbindlist(list(merged_field_df, merged_literature_df), fill = TRUE)
+
+  message("\n--------------------------------------------------------")
+  message(paste0("Final dataset created with ", nrow(final_dataset), " rows and ", ncol(final_dataset), " columns."))
+  message("--------------------------------------------------------")
+
+  return(final_dataset)
+}
 
 #' Subset Biologer Data
 #'
