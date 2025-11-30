@@ -71,7 +71,7 @@ collapse_types <- function(type_df) {
 #' @keywords internal
 collapse_photo_urls <- function(photos_df) {
   if (is.data.frame(photos_df) && nrow(photos_df) > 0 && "url" %in% names(photos_df)) {
-    paste(photos_df$url, collapse = "; ")
+    paste(photos_df$url, collapse = "|")
   } else {
     ""
   }
@@ -100,7 +100,7 @@ collapse_translations <- function(translations_df) {
     valid_translations$native_name
   )
 
-  paste(translated_pairs, collapse = ";")
+  paste(translated_pairs, collapse = "|")
 }
 
 #' Collapse nested 'stages' data frame into a semicolon-separated string of stage names.
@@ -108,7 +108,7 @@ collapse_translations <- function(translations_df) {
 #' @keywords internal
 collapse_stages <- function(stages_df) {
   if (is.data.frame(stages_df) && nrow(stages_df) > 0 && "name" %in% names(stages_df)) {
-    paste(stages_df$name, collapse = "; ")
+    paste(stages_df$name, collapse = "|")
   } else {
     ""
   }
@@ -120,10 +120,175 @@ collapse_stages <- function(stages_df) {
 #' @keywords internal
 collapse_synonyms <- function(synonyms_df) {
   if (is.data.frame(synonyms_df) && nrow(synonyms_df) > 0 && "name" %in% names(synonyms_df)) {
-    paste(synonyms_df$name, collapse = "; ")
+    paste(synonyms_df$name, collapse = "|")
   } else {
     ""
   }
+}
+
+#' Check if a single activity record is a relevant identification event (creation or change).
+#'
+#' @param activity_row A single row (as a list) from the activity data frame.
+#' @return TRUE if it's a taxon-related event (created/updated with taxon data), FALSE otherwise.
+#' @keywords internal
+is_identification_event <- function(activity_row) {
+  # Check for explicit change event
+  is_change <- is_taxon_change_event(activity_row$properties)
+
+  # Check for initial creation
+  is_creation <- (activity_row$description == "created")
+
+  # Return if there was a creation event or an explicit update
+  is_change || is_creation
+}
+
+#' Check if a single activity record is a taxon change event.
+#'
+#' @param property_list A single list element from the 'properties' column.
+#' @return TRUE if it's a taxon change, FALSE otherwise.
+#' @keywords internal
+is_taxon_change_event <- function(property_list) {
+  # Check for 'old'
+  if (!is.list(property_list) || !("old" %in% names(property_list))) {
+    return(FALSE)
+  }
+
+  old_list <- property_list$old
+
+  # Check for 'taxon' inside 'old'
+  if (!is.list(old_list) || !("taxon" %in% names(old_list))) {
+    return(FALSE)
+  }
+
+  taxon_list <- old_list$taxon
+
+  # Check for 'label' inside 'taxon'
+  if (!is.list(taxon_list) || !("label" %in% names(taxon_list))) {
+    return(FALSE)
+  }
+
+  taxon_label <- taxon_list$label
+
+  # Return TRUE if the label is a non-empty string
+  if (is.character(taxon_label) && length(taxon_label) == 1 && nchar(taxon_label) > 0) {
+    return(TRUE)
+  }
+
+  FALSE
+}
+
+#' Extracts the latest 'created_at' date of any successful taxon identification event
+#' and formats it to 'YYYY-MM-DDTHH:MM:SS+01:00' using only base R.
+#'
+#' @param activity_df A data frame containing activity records for a single observation.
+#' @return The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SS+01:00', or NA if none are found.
+#' @keywords internal
+latest_identification_date <- function(activity_df) {
+  # 1. Check if the input is valid
+  if (!is.data.frame(activity_df) || nrow(activity_df) == 0 || !("created_at" %in% names(activity_df))) {
+    return(NA_character_)
+  }
+
+  # 2. Identify which rows correspond to a relevant identification event
+  is_relevant_event <- apply(activity_df, MARGIN = 1, FUN = is_identification_event)
+
+  # 3. Filter the activity data frame to keep only the relevant events
+  relevant_events <- activity_df[is_relevant_event, ]
+
+  # 4. If no relevant events are found, return NA
+  if (nrow(relevant_events) == 0) {
+    return(NA_character_)
+  }
+
+  # 5. Find the *maximum* date string (the latest one)
+  latest_date_str <- max(relevant_events$created_at, na.rm = TRUE)
+
+  if (is.infinite(latest_date_str)) {
+    return(NA_character_)
+  }
+
+  # 6. Convert the date string to the appropriate format
+  # Clean the string by removing fractional seconds and 'Z'.
+  cleaned_date_str <- sub("\\.\\d+Z$", "", latest_date_str)
+  # Parse the UTC date string into an R POSIXct object.
+  latest_date_utc <- as.POSIXct(
+    cleaned_date_str,
+    format = "%Y-%m-%dT%H:%M:%S",
+    tz = "UTC"
+  )
+  # Convert the UTC time object to the target timezone
+  target_timezone <- "Europe/Belgrade"
+  # Format the POSIXct object to the exact required string structure.
+  formatted_date_no_colon <- format(
+    latest_date_utc,
+    format = "%Y-%m-%dT%H:%M:%S%z",
+    tz = target_timezone
+  )
+  # Insert the required colon into the timezone offset (+HHMM -> +HH:MM)
+  n <- nchar(formatted_date_no_colon)
+  formatted_date <- paste0(
+    substr(formatted_date_no_colon, 1, n - 2),
+    ":",
+    substr(formatted_date_no_colon, n - 1, n)
+  )
+
+  formatted_date
+}
+
+#' Collapse all taxa change records from the nested 'activity' column into a single string.
+#'
+#' @param activity_df A data frame containing activity records for a single observation.
+#' @return A character string of collapsed taxa changes, or an empty string if none are found.
+#' @keywords internal
+collapse_activity_taxa_changes <- function(activity_df) {
+  if (!is.data.frame(activity_df) || nrow(activity_df) == 0 || !("properties" %in% names(activity_df))) {
+    return("")
+  }
+
+  # Apply the helper function to every list element in the 'properties' column
+  # and filter out the NULL results
+  taxa_changes <- unlist(lapply(activity_df$properties, extract_taxa_from_activity))
+  taxa_changes <- taxa_changes[!sapply(taxa_changes, is.null)]
+
+  if (length(taxa_changes) > 0) {
+    # Collapse all found changes into a single pipe-separated string
+    paste(taxa_changes, collapse = "|")
+  } else {
+    ""
+  }
+}
+
+#' Extract the old taxon name from a single 'properties' list element.
+#'
+#' It searches for 'properties$old$taxon$label'.
+#'
+#' @param property_list A single list element from the 'properties' column.
+#' @return The old taxon name (character string) or an empty string if not found.
+#' @keywords internal
+extract_taxa_from_activity <- function(property_list) {
+  if (!is.list(property_list) || !("old" %in% names(property_list))) {
+    return(NULL)
+  }
+
+  old_list <- property_list$old
+
+  if (!is.list(old_list) || !("taxon" %in% names(old_list))) {
+    return(NULL)
+  }
+
+  taxon_list <- old_list$taxon
+
+  if (!is.list(taxon_list) || !("label" %in% names(taxon_list))) {
+    return(NULL)
+  }
+
+  taxon_label <- taxon_list$label
+
+  if (is.character(taxon_label) && length(taxon_label) == 1 && nchar(taxon_label) > 0) {
+    return(taxon_label)
+  }
+
+  NULL
 }
 
 #' Formats a list of publication authors into a standard citation string.
@@ -221,8 +386,9 @@ display_progress <- function(records_fetched, total_records) {
 #' @param columns_to_keep Select columns to keep in the final dataset. Server
 #' will return many columns, which are not required for R Biologer package to work.
 #' @keywords internal
+#' @import data.table
 #' @export
-get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) {
+get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep = NULL) {
   if (is.null(filename)) {
     message("Due to its size, data should be saved into a file. Please provide CSV file for saving data.")
     break
@@ -304,7 +470,6 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
 
     # 1. Save the data
     current_page_data <- data$data # downloaded batch of data
-    #print(colnames(current_page_data))
 
     # Define columns to keep in the final dataset
     if (!is.null(columns_to_keep) && length(columns_to_keep) > 0) {
@@ -337,6 +502,21 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
     # Process the 'synonyms' column
     if ("synonyms" %in% names(current_page_data) && is.list(current_page_data$synonyms)) {
       current_page_data$synonyms <- unlist(lapply(current_page_data$synonyms, collapse_synonyms))
+    }
+    # Process the 'activity' column to extract and collapse taxa changes
+    if ("activity" %in% names(current_page_data) && is.list(current_page_data$activity)) {
+      # 1. Extract the latest identification date
+      current_page_data$dateIdentified <- unlist(lapply(
+        current_page_data$activity,
+        latest_identification_date
+      ))
+
+      # 2. Extract and the list of old taxon names
+      current_page_data$previousIdentifications <- unlist(lapply(
+        current_page_data$activity,
+        collapse_activity_taxa_changes
+      ))
+      current_page_data$activity <- NULL
     }
 
     data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
@@ -384,6 +564,43 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep) 
   }
 
   message("The data is saved locally in ", filename)
+}
+
+#' Fetch simple data from the API that does not require pagination and timestamps
+#'
+#' @param api_url URL of the Biologer API used to access the data.
+#' @param token JWT authorization token.
+#' @keywords internal
+#' @export
+get_data_from_simple_api <- function(api_url, token) {
+
+  repeat {
+
+    h <- curl::new_handle()
+    curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
+    result <- curl::curl_fetch_memory(api_url, handle = h)
+
+    # Handle server rate/overload conditions
+    if (result$status_code %in% c(429, 503)) {
+      # Exponential backoff for 503
+      wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
+      message(
+        "Server returned ", result$status_code, ". Waiting ",
+        round(wait, 1), " seconds before retry…"
+      )
+      Sys.sleep(wait)
+      next
+    }
+
+    # If the server return error code
+    if (result$status_code != 200) {
+      warning(paste("Failed to download page, error code:", result$status_code))
+      return(NULL)
+    }
+
+    data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
+    return(data$data)
+  }
 }
 
 #' Main function used to get data from all logged-in Biologer servers
@@ -454,4 +671,334 @@ get_biologer_data <- function() {
   message("--------------------------------------------------------")
 
   invisible(TRUE)
+}
+
+#' @title Load and Consolidate Biologer Data
+#' @description This function reads, joins, and consolidates observation (Field and
+#' Literature) and taxonomic data downloaded from one or more Biologer servers. It
+#' performs server-specific joins with taxonomy data and then merges all resulting
+#' observations into a single, comprehensive \code{data.table}.
+#' @param auto.download Logical. If \code{TRUE} (default), the function first calls
+#' \code{\link{get_biologer_data}()} to download the latest data from all configured
+#' Biologer servers before consolidation. If \code{FALSE}, it only loads existing
+#' files from the storage path.
+#' @return A single \code{data.table} containing all consolidated and merged observation
+#' records. This \code{data.table} includes columns from both Field and Literature
+#' observations, with non-matching columns filled with \code{NA}.
+#' @details The function performs the following steps:
+#' \enumerate{
+#'   \item For each active Biologer server, it reads three files: Taxonomy (\code{biologer_taxa}),
+#'         Field Observations (\code{biologer_field_observations}), and Literature Observations
+#'         (\code{biologer_literature_observations}).
+#'   \item It performs a left join (1:N) between the Observation dataframes and the Taxonomy
+#'         dataframe using \code{taxon.id} (Observation) and \code{id} (Taxonomy).
+#'   \item It uses \code{data.table::fread} for fast file reading and \code{data.table::rbindlist}
+#'         with \code{fill = TRUE} for fast and safe row-wise consolidation across different servers and
+#'         between the Field and Literature datasets.
+#' }
+#' @references Requires the \code{data.table} package.
+#' @seealso \code{\link{get_biologer_data}}, \code{\link{biologer_login}}
+#' @import data.table
+#' @export
+open_data <- function(auto.download = TRUE) {
+
+  # Get new data from the servers
+  if (auto.download == TRUE) {
+    get_biologer_data()
+  }
+
+  storage_path <- get_storage_path()
+  active_servers <- intersect(names(get_biologer_token()), names(get_biologer_base_url()))
+
+  if (length(active_servers) == 0) {
+    stop("No active server credentials found. Cannot determine which files to load. 
+         Please use biologer_login() to add at least one Biologer server.", call. = FALSE)
+  }
+
+  all_field_data <- list()
+  all_literature_data <- list()
+
+  get_filename <- function(prefix, server_key) {
+    file.path(storage_path, paste0(prefix, "_", server_key, ".csv"))
+  }
+
+  message("========================================================")
+  message("  STARTING DATA CONSOLIDATION")
+  message("========================================================")
+
+  for (server_key in active_servers) {
+    server_display <- toupper(server_key)
+    message(paste0("\n* Processing server: ", server_display))
+
+    taxa_file <- get_filename("biologer_taxa", server_key)
+    field_file <- get_filename("biologer_field_observations", server_key)
+    literature_file <- get_filename("biologer_literature_observations", server_key)
+
+    # 1. Load and update Taxonomic data
+    if (!file.exists(taxa_file)) {
+      message(paste0("  - Skipping ", server_display, ": Taxonomic file is missing, use get_biologer_data()"))
+      next
+    }
+    taxa_df <- data.table::fread(taxa_file, stringsAsFactors = FALSE, fill = TRUE)
+    taxa_df <- get_parent_taxa(taxa_df)
+    # Add other required columns
+    if ("translations" %in% names(taxa_df)) {
+      locale_code <- "en"
+      pattern <- paste0("^.*(?:\\||^)", locale_code, "=(.*?)(?:\\||$).*$")
+      taxa_df[, vernacularName := sub(pattern, "\\1", translations, perl = TRUE)]
+      taxa_df[vernacularName == translations | is.na(translations), vernacularName := NA_character_]
+      taxa_df[vernacularName == "", vernacularName := NA_character_]
+    } else {
+      taxa_df$vernacularName <- NA_character_
+    }
+
+    # 2. Load and update Field data
+    if (file.exists(field_file)) {
+      col_types <- c(dateIdentified = "character")
+      field_df <- data.table::fread(
+        field_file,
+        stringsAsFactors = FALSE,
+        fill = TRUE,
+        colClasses = col_types
+      )
+      # Add other required columns
+      field_df$basisOfRecord <- "HumanObservation"
+      field_df$taxonomicStatus <- "valid"
+      if ("types" %in% names(field_df)) {
+        field_df[, typeOfRecord := fifelse(
+          grepl("Photographed", types, fixed = TRUE),
+          "Observed|Photographed",
+          fifelse(
+            grepl("Observed", types, fixed = TRUE),
+            "Observed",
+            NA_character_
+          )
+        )]
+        field_df[, `dcterms:type` := fifelse(
+          grepl("Photographed", types, fixed = TRUE),
+          "StillImage",
+          fifelse(
+            grepl("Observed|Call|Exuviae", types), # Use standard regex here
+            "Event",
+            NA_character_
+          )
+        )]
+      } else {
+        field_df$typeOfRecord <- NA_character_
+        field_df$`dcterms:type` <- NA_character_
+      }
+      field_df[, `dcterms:rightsHolder` := paste0("biologer.", server_key, " community")]
+      field_df[, `dcterms:accessRights` := fifelse(
+        license == 10, "CC BY-SA 4.0",
+        fifelse(license == 20, "CC BY-NC-SA 4.0",
+        fifelse(license == 30, "CC BY-NC-SA 4.0 (limited coordinates)",
+        fifelse(license == 35, "CC BY-SA 4.0 (closed for 3 years)",
+        fifelse(license == 40, "Closed",
+        NA_character_)))))
+      ]
+      field_df[, `dcterms:license` := fifelse(
+        license == 10, "https://creativecommons.org/licenses/by-sa/4.0/",
+        fifelse(license == 20, "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+        fifelse(license == 30, paste0("https://biologer.", server_key, "/licenses/partially-open-data-license"),
+        fifelse(license == 35, paste0("https://biologer.", server_key, "/licenses/temporarily-closed-data-license"),
+        fifelse(license == 40, paste0("https://biologer.", server_key, "/licenses/closed-data-license"),
+        NA_character_))))
+      )]
+
+      message("  - Joining Field Observations with Taxonomy.")
+      field_merged <- merge(
+        field_df,
+        taxa_df,
+        by.x = "taxon.id",
+        by.y = "id",
+        all.x = TRUE,
+        sort = FALSE
+      )
+      all_field_data[[server_key]] <- field_merged
+    } else {
+      message("  - Field Observations file is missing!!!")
+    }
+
+    # Load and update Literature data
+    if (file.exists(literature_file)) {
+      literature_df <- data.table::fread(
+        literature_file,
+        stringsAsFactors = FALSE,
+        fill = TRUE
+      )
+      # Add other required columns
+      literature_df$basisOfRecord <- "Literature"
+      literature_df$taxonomicStatus <- "valid"
+      literature_df$typeOfRecord <- NA_character_
+      literature_df$`dcterms:type` <- "Text"
+      literature_df[, `dcterms:rightsHolder` := paste0("biologer.", server_key, " community")]
+      literature_df$`dcterms:accessRights` <- "CC BY-SA 4.0"
+      literature_df$`dcterms:license` <- "https://creativecommons.org/licenses/by-sa/4.0/"
+
+      message("  - Joining Literature Observations with Taxonomy.")
+      literature_merged <- merge(
+        literature_df,
+        taxa_df,
+        by.x = "taxon.id",
+        by.y = "id",
+        all.x = TRUE,
+        sort = FALSE
+      )
+      all_literature_data[[server_key]] <- literature_merged
+    } else {
+      message("  - Literature Observations file is missing!!!")
+    }
+  }
+
+  message("\n* Merging data from all the servers.")
+  merged_field_df <- data.table::rbindlist(all_field_data, fill = TRUE)
+  merged_literature_df <- data.table::rbindlist(all_literature_data, fill = TRUE)
+
+  message("\n* Final consolidation of Field and Literature data.")
+  final_dataset <- data.table::rbindlist(list(merged_field_df, merged_literature_df), fill = TRUE)
+
+  message("\n--------------------------------------------------------")
+  message(paste0("Final dataset created with ", nrow(final_dataset), " rows and ", ncol(final_dataset), " columns."))
+  message("--------------------------------------------------------")
+
+  # Reorder columns
+  new_order <- c("id", "taxon.id", "kingdom", "subkingdom", "infrakingdom", "phylum",
+                 "subphylum", "class", "subclass", "order", "suborder", "infraorder",
+                 "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
+                 "specificEpithet", "species", "author", "infraspecificEpithet",
+                 "name", "acceptedNameUsage", "previousIdentifications", "rank",
+                 "vernacularName", "taxonomicStatus", "identifier", "dateIdentified",
+                 "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
+                 "dcterms:accessRights", "dcterms:license",
+                 "subspecies", "speciescomplex")
+  data.table::setcolorder(final_dataset, new_order)
+
+  # Renaming dataset to fitt into the DarwinCore
+  data.table::setnames(final_dataset,
+                       c("id", "taxon.id", "author", "rank",
+                         "name", "identifier"),
+                       c("occurrenceID", "taxonID", "scientificNameAuthorship", "taxonRank",
+                         "scientificName", "identifiedBy"))
+
+  # Remove columns that we don't need
+  columns_to_drop <- c("rank_level", "uses_atlas_codes", "ancestors_names", "license")
+  final_dataset[, (columns_to_drop) := NULL]
+
+  return(final_dataset)
+}
+
+#' Extract and Map Parent Taxa Ranks to New Columns
+#'
+#' Takes a data.table containing taxonomic data with comma-separated ancestry
+#' strings and maps the ancestor names to their official rank (e.g., 'kingdom',
+#' 'phylum') as new columns in the data.table. This process is optimized for
+#' performance using data.table's `tstrsplit`, `melt`, and `dcast`.
+#'
+#' @param data_table A \code{data.table} object. It must contain the columns:
+#'   \itemize{
+#'     \item \code{ancestors_names} (character): The comma-separated string of parent taxa names.
+#'     \item \code{name} (character): The name of the taxon (used for rank lookup).
+#'     \item \code{rank} (character): The taxonomic rank of the taxon (used for new column headers).
+#'   }
+#'
+#' @return A \code{data.table} object that is a copy of the input, augmented with
+#'   new columns. These new columns are named after the unique taxonomic ranks
+#'   found (e.g., \code{kingdom}, \code{phylum}), and are populated with the
+#'   corresponding ancestor name from the \code{ancestors_names} string.
+#'   Temporary columns (\code{RowID}, \code{TaxaName_*}) are removed.
+#'
+#' @import data.table stringi
+#' @importFrom data.table :=
+#' @importFrom data.table .I
+#' @importFrom data.table .SD
+#' @export
+#' @import data.table stringi
+#' @import data.table stringi
+#' @import data.table stringi
+get_parent_taxa <- function(data_table) {
+
+  DT <- data.table::copy(data_table) # Make a copy of the data_table
+  DT[, RowID := .I] # Create ID
+  DT[, rank := tolower(trimws(rank))] # Clean up
+
+  # Create a lookup table (Name -> Rank)
+  rank_lookup <- unique(DT[, .(name, rank)])
+
+  # 1. Process Ancestors (Split & Melt)
+  max_ranks <- max(stringi::stri_count_fixed(DT$ancestors_names, ","), na.rm = TRUE) + 1
+  new_cols <- paste0("TaxaName_", 1:max_ranks)
+  # Split ancestors into temporary columns
+  DT[, (new_cols) := data.table::tstrsplit(ancestors_names, ",", fixed = TRUE)]
+  # Melt ancestors to long format.
+  # Result table: RowID | variable | TaxaName (ancestor name)
+  long_ancestors <- data.table::melt(
+    DT,
+    id.vars = "RowID",
+    measure.vars = new_cols,
+    value.name = "TaxaName",
+    variable.name = "SplitID"
+  )
+  # Remove entries where TaxaName is NA (empty ancestors)
+  long_ancestors <- na.omit(long_ancestors, cols = "TaxaName")
+
+  # Join with rank_lookup to get the 'rank' for each ancestor name
+  # Result table: RowID | TaxaName | rank
+  long_ancestors_mapped <- rank_lookup[long_ancestors, on = c(name = "TaxaName")]
+
+  # 2. Process Current Taxon
+  # Create a long-format table for the CURRENT row's taxon
+  # Result table: RowID | TaxaName | rank
+  long_current <- DT[, .(RowID, TaxaName = name, rank)]
+
+  # 3. Combine and Pivot
+  # Stack ancestors and current taxon into one list.
+  combined_long <- rbind(long_ancestors_mapped[, .(RowID, TaxaName = name, rank)],
+                         long_current)
+
+  # Pivot to Wide Format
+  # This creates the final columns: RowID, kingdom, phylum, class, species, etc.
+  final_ranks_wide <- data.table::dcast(
+    combined_long,
+    RowID ~ rank,
+    value.var = "TaxaName",
+    fun.aggregate = function(x) x[1] # Take the first match if duplicates exist (rare)
+  )
+
+  # Identify the new rank columns we just created (excluding RowID)
+  new_rank_cols <- setdiff(names(final_ranks_wide), "RowID")
+
+  # Remove these columns from the original DT if they exist.
+  cols_to_drop <- intersect(names(DT), new_rank_cols)
+  if (length(cols_to_drop) > 0) {
+    DT[, (cols_to_drop) := NULL]
+  }
+
+  # Remove the temporary split columns from DT
+  DT[, (new_cols) := NULL]
+
+  # Merge the new, fully populated rank columns back into DT
+  result <- final_ranks_wide[DT, on = "RowID"]
+
+  # Clean up RowID
+  result[, RowID := NULL]
+
+  # Get the specificEpithet column (2nd part of the name column for species and subspecies)
+  result[, specificEpithet := NA_character_]
+  target_ranks <- c("species", "subspecies")
+  result[rank %in% target_ranks,
+         specificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)]
+
+  # Get the infraspecificEpithet column (3nd part of the name column for subspecies)
+  result[, infraspecificEpithet := NA_character_]
+  result[rank %in% "subspecies",
+         infraspecificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)]
+
+  # Get the acceptedNameUsage column from name and author, but ass "subsp." for plants
+  result[, acceptedNameUsage := name]
+  result[!is.na(author) & author != "",
+         acceptedNameUsage := paste(name, author, sep = " ")]
+  result[kingdom == "Plantae" & rank == "subspecies" & !is.na(author) & author != "",
+         acceptedNameUsage := paste(name, author, sep = " subsp. ")]
+
+  result
 }

@@ -110,3 +110,25 @@ get_biologer_token <- function() {
 
   tokens
 }
+
+#' Extracts a specific vernacular name from the translations string based on the locale code.
+#'
+#' @param translations_string A character string containing locale-value pairs (e.g., "en=name|hr=ime").
+#' @param locale_code A character string specifying the locale key to extract (e.g., "en", "hr", "sr-Latn").
+#' @return The extracted vernacular name (character string), or NA if the locale is not found.
+#' @export
+extract_translation <- function(translations_string, locale_code) {
+  if (is.na(translations_string) || translations_string == "") {
+    return(NA_character_)
+  }
+
+  pattern <- paste0("^.*(?:\\||^)", locale_code, "=(.*?)(?:\\||$).*$")
+
+  result <- sub(pattern, "\\1", translations_string, perl = TRUE)
+
+  if (result == translations_string) {
+    NA_character_
+  } else {
+    result
+  }
+}

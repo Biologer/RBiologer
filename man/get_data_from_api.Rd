@@ -4,7 +4,7 @@
 \alias{get_data_from_api}
 \title{Fetch Paginated Observations and Save/Resume using Timestamp}
 \usage{
-get_data_from_api(api_url, token, filename = NULL, columns_to_keep)
+get_data_from_api(api_url, token, filename = NULL, columns_to_keep = NULL)
 }
 \arguments{
 \item{api_url}{URL of the Biologer API used to access the data.}
