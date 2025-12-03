@@ -3,7 +3,7 @@
 \name{latest_identification_date}
 \alias{latest_identification_date}
 \title{Extracts the latest 'created_at' date of any successful taxon identification event
-and formats it to 'YYYY-MM-DDTHH:MM:SS+01:00' using only base R.}
+and formats it to the preferred ISO 8601 UTC format (YYYY-MM-DDTHH:MM:SSZ).}
 \usage{
 latest_identification_date(activity_df)
 }
@@ -11,10 +11,10 @@ latest_identification_date(activity_df)
 \item{activity_df}{A data frame containing activity records for a single observation.}
 }
 \value{
-The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SS+01:00', or NA if none are found.
+The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SSZ', or NA if none are found.
 }
 \description{
 Extracts the latest 'created_at' date of any successful taxon identification event
-and formats it to 'YYYY-MM-DDTHH:MM:SS+01:00' using only base R.
+and formats it to the preferred ISO 8601 UTC format (YYYY-MM-DDTHH:MM:SSZ).
 }
 \keyword{internal}

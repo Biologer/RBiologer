@@ -2,9 +2,8 @@ Package: RBiologer
 Title: Connect to online Biologer API, download and analyse data
 Version: 0.0.0.9000
 Authors@R: c(
-    person(, role = "ctb"),
-    person("Tomislav", "Gojak", , "tomislav.gojak@hhdhyla.hr", role = c("aut", "cre")),
-    person("Miloš", "Popović", , "mpopovic@pmf.ni.ac.rs", role = c("aut", "cre"))
+    person("Miloš", "Popović", , "mpopovic@pmf.ni.ac.rs", role = c("aut", "cre")),
+    person("Tomislav", "Gojak", , "tomislav.gojak@hhdhyla.hr", role = c("aut")),
   )
 Description: Biologer R package is primarily used to connect to online API and download data.
   It could use any of officially supported servers (i.e. biologer.rs, biologer.hr, biologer.ba,
@@ -14,3 +13,11 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+Depends: 
+  data.table,
+  jsonlite,
+  curl
+Imports:
+  sf
+Suggests:
+

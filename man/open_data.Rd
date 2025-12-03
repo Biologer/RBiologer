@@ -4,7 +4,7 @@
 \alias{open_data}
 \title{Load and Consolidate Biologer Data}
 \usage{
-open_data(auto.download = TRUE)
+open_data(auto.download = TRUE, verbose = TRUE)
 }
 \arguments{
 \item{auto.download}{Logical. If \code{TRUE} (default), the function first calls

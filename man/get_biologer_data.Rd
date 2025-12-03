@@ -4,7 +4,7 @@
 \alias{get_biologer_data}
 \title{Main function used to get data from all logged-in Biologer servers}
 \usage{
-get_biologer_data()
+get_biologer_data(verbose = TRUE)
 }
 \description{
 This function iterates through all servers for which credentials

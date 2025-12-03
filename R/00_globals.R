@@ -35,3 +35,13 @@ TAXA_COLUMNS <- c(
   "allochthonous", "invasive", "uses_atlas_codes", "ancestors_names",
   "translations", "stages", "synonyms"
 )
+
+DWC_COLUMN_ORDER <- c("occurrenceID", "taxonID", "kingdom", "subkingdom", "infrakingdom", "phylum",
+                      "subphylum", "class", "subclass", "order", "suborder", "infraorder",
+                      "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
+                      "specificEpithet", "species", "scientificNameAuthorship", "infraspecificEpithet",
+                      "scientificName", "acceptedNameUsage", "previousIdentifications", "taxonRank",
+                      "vernacularName", "taxonomicStatus", "identifiedBy", "dateIdentified",
+                      "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
+                      "dcterms:accessRights", "dcterms:license", "decimalLatitude", "decimalLongitude",
+                      "subspecies", "speciescomplex")

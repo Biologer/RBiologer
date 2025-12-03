@@ -1,9 +1,3 @@
-#' @import jsonlite
-#' @import data.table
-#' @import curl
-#' @importFrom readr write_csv locale
-NULL
-
 #' Set or Update the 'per_page' Query Parameter in a URL
 #'
 #' Ensures that a given URL for the Biologer API includes the 'per_page'
@@ -177,64 +171,6 @@ is_taxon_change_event <- function(property_list) {
   FALSE
 }
 
-#' Extracts the latest 'created_at' date of any successful taxon identification event
-#' and formats it to 'YYYY-MM-DDTHH:MM:SS+01:00' using only base R.
-#'
-#' @param activity_df A data frame containing activity records for a single observation.
-#' @return The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SS+01:00', or NA if none are found.
-#' @keywords internal
-latest_identification_date <- function(activity_df) {
-  # 1. Check if the input is valid
-  if (!is.data.frame(activity_df) || nrow(activity_df) == 0 || !("created_at" %in% names(activity_df))) {
-    return(NA_character_)
-  }
-
-  # 2. Identify which rows correspond to a relevant identification event
-  is_relevant_event <- apply(activity_df, MARGIN = 1, FUN = is_identification_event)
-
-  # 3. Filter the activity data frame to keep only the relevant events
-  relevant_events <- activity_df[is_relevant_event, ]
-
-  # 4. If no relevant events are found, return NA
-  if (nrow(relevant_events) == 0) {
-    return(NA_character_)
-  }
-
-  # 5. Find the *maximum* date string (the latest one)
-  latest_date_str <- max(relevant_events$created_at, na.rm = TRUE)
-
-  if (is.infinite(latest_date_str)) {
-    return(NA_character_)
-  }
-
-  # 6. Convert the date string to the appropriate format
-  # Clean the string by removing fractional seconds and 'Z'.
-  cleaned_date_str <- sub("\\.\\d+Z$", "", latest_date_str)
-  # Parse the UTC date string into an R POSIXct object.
-  latest_date_utc <- as.POSIXct(
-    cleaned_date_str,
-    format = "%Y-%m-%dT%H:%M:%S",
-    tz = "UTC"
-  )
-  # Convert the UTC time object to the target timezone
-  target_timezone <- "Europe/Belgrade"
-  # Format the POSIXct object to the exact required string structure.
-  formatted_date_no_colon <- format(
-    latest_date_utc,
-    format = "%Y-%m-%dT%H:%M:%S%z",
-    tz = target_timezone
-  )
-  # Insert the required colon into the timezone offset (+HHMM -> +HH:MM)
-  n <- nchar(formatted_date_no_colon)
-  formatted_date <- paste0(
-    substr(formatted_date_no_colon, 1, n - 2),
-    ":",
-    substr(formatted_date_no_colon, n - 1, n)
-  )
-
-  formatted_date
-}
-
 #' Collapse all taxa change records from the nested 'activity' column into a single string.
 #'
 #' @param activity_df A data frame containing activity records for a single observation.
@@ -289,6 +225,39 @@ extract_taxa_from_activity <- function(property_list) {
   }
 
   NULL
+}
+
+#' Extracts the latest 'created_at' date of any successful taxon identification event
+#' and formats it to the preferred ISO 8601 UTC format (YYYY-MM-DDTHH:MM:SSZ).
+#'
+#' @param activity_df A data frame containing activity records for a single observation.
+#' @return The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SSZ', or NA if none are found.
+#' @keywords internal
+latest_identification_date <- function(activity_df) {
+  if (!is.data.frame(activity_df) || nrow(activity_df) == 0 || !("created_at" %in% names(activity_df))) {
+    return(NA_character_)
+  }
+  is_relevant_event <- apply(activity_df, MARGIN = 1, FUN = is_identification_event)
+  relevant_events <- activity_df[is_relevant_event, ]
+  if (nrow(relevant_events) == 0) {
+    return(NA_character_)
+  }
+  latest_date_str <- max(relevant_events$created_at, na.rm = TRUE)
+  if (is.infinite(latest_date_str)) {
+    return(NA_character_)
+  }
+  cleaned_date_str <- sub("\\.\\d+Z$", "Z", latest_date_str)
+  latest_date_utc <- as.POSIXct(
+    cleaned_date_str,
+    format = "%Y-%m-%dT%H:%M:%S",
+    tz = "UTC"
+  )
+  formatted_date <- format(
+    latest_date_utc,
+    format = "%Y-%m-%dT%H:%M:%SZ",
+    tz = "UTC"
+  )
+  formatted_date
 }
 
 #' Formats a list of publication authors into a standard citation string.
@@ -388,7 +357,7 @@ display_progress <- function(records_fetched, total_records) {
 #' @keywords internal
 #' @import data.table
 #' @export
-get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep = NULL) {
+get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep = NULL, verbose = TRUE) {
   if (is.null(filename)) {
     message("Due to its size, data should be saved into a file. Please provide CSV file for saving data.")
     break
@@ -413,12 +382,16 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
       url <- get_fetch_start_url(api_url, last_success_timestamp)
       records_fetched <- 0
       total_records <- NULL
-      message(paste0("Starting incremental fetch after timestamp: ", last_success_timestamp))
+      if (verbose == TRUE) {
+        message(paste0("Starting incremental fetch after timestamp: ", last_success_timestamp))
+      }
     }
   } else {
     # Initial Full Download
     url <- get_fetch_start_url(api_url, last_success_timestamp)
-    message("Starting initial full fetch from URL: ", url)
+    if (verbose == TRUE) {
+      message("Starting initial full fetch from URL: ", url)
+    }
   }
 
   repeat {
@@ -453,7 +426,9 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
       total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
       if (!is.null(total_records)) {
         if (total_records == 0) {
-          message("The data is already downloaded. No need to update…")
+          if (verbose == TRUE) {
+            message("The data is already downloaded. No need to update…")
+          }
           break
         } else {
           message("Total records to download: ", format(total_records, big.mark = ","))
@@ -563,7 +538,9 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
     }
   }
 
-  message("The data is saved locally in ", filename)
+  if (verbose == TRUE) {
+    message("The data is saved locally in ", filename)
+  }
 }
 
 #' Fetch simple data from the API that does not require pagination and timestamps
@@ -610,7 +587,7 @@ get_data_from_simple_api <- function(api_url, token) {
 #' taxonomic data for each active server.
 #'
 #' @export
-get_biologer_data <- function() {
+get_biologer_data <- function(verbose = TRUE) {
   tokens <- get_biologer_token()
   urls <- get_biologer_base_url()
 
@@ -628,47 +605,60 @@ get_biologer_data <- function() {
     server_token <- tokens[server_key]
     server_display <- toupper(server_key)
 
-    message("\n========================================================")
-    message(paste0("  STARTING DATA DOWNLOAD FOR SERVER: ", server_display))
-    message("========================================================\n")
+    if (verbose == TRUE) {
+      message("\n========================================================")
+      message(paste0("  STARTING DATA DOWNLOAD FOR SERVER: ", server_display))
+      message("========================================================\n")
+    }
 
     # File suffix is now server-specific (e.g., _rs.csv)
     file_suffix <- paste0("_", server_key, ".csv")
 
     # --- Step 1/3: Downloading Field Observation data ---
-    message(paste0("* Step 1/3 [", server_display, "]: Downloading Field Observation data."))
+    if (verbose == TRUE) {
+      message(paste0("* Step 1/3 [", server_display, "]: Downloading Field Observation data."))
+    }
     get_data_from_api(
       api_url = paste0(server_url, "/public-field-observations"),
       token = server_token,
       # Server-specific filename
       filename = file.path(storage_path, paste0("biologer_field_observations", file_suffix)),
-      columns_to_keep = FIELD_OBS_COLUMNS
+      columns_to_keep = FIELD_OBS_COLUMNS,
+      verbose = verbose
     )
 
     # --- Step 2/3: Downloading Literature Observation data ---
-    message(paste0("* Step 2/3 [", server_display, "]: Downloading Literature Observation data."))
+    if (verbose == TRUE) {
+      message(paste0("* Step 2/3 [", server_display, "]: Downloading Literature Observation data."))
+    }
     get_data_from_api(
       api_url = paste0(server_url, "/literature-observations"),
       token = server_token,
       # Server-specific filename
       filename = file.path(storage_path, paste0("biologer_literature_observations", file_suffix)),
-      columns_to_keep = LITERATURE_OBS_COLUMNS
+      columns_to_keep = LITERATURE_OBS_COLUMNS,
+      verbose = verbose
     )
 
     # --- Step 3/3: Downloading Taxonomic data ---
-    message(paste0("* Step 3/3 [", server_display, "]: Downloading Taxonomic data."))
+    if (verbose == TRUE) {
+      message(paste0("* Step 3/3 [", server_display, "]: Downloading Taxonomic data."))
+    }
     get_data_from_api(
       api_url = paste0(server_url, "/taxa"),
       token = server_token,
       # Server-specific filename
       filename = file.path(storage_path, paste0("biologer_taxa", file_suffix)),
-      columns_to_keep = TAXA_COLUMNS
+      columns_to_keep = TAXA_COLUMNS,
+      verbose = verbose
     )
   }
 
-  message("\n--------------------------------------------------------")
-  message("All data downloads and consolidations complete.")
-  message("--------------------------------------------------------")
+  if (verbose == TRUE) {
+    message("\n--------------------------------------------------------")
+    message("All data downloads completed.")
+    message("--------------------------------------------------------")
+  }
 
   invisible(TRUE)
 }
@@ -700,11 +690,11 @@ get_biologer_data <- function() {
 #' @seealso \code{\link{get_biologer_data}}, \code{\link{biologer_login}}
 #' @import data.table
 #' @export
-open_data <- function(auto.download = TRUE) {
+open_data <- function(auto.download = TRUE, verbose = TRUE) {
 
   # Get new data from the servers
   if (auto.download == TRUE) {
-    get_biologer_data()
+    get_biologer_data(verbose = verbose)
   }
 
   storage_path <- get_storage_path()
@@ -722,19 +712,25 @@ open_data <- function(auto.download = TRUE) {
     file.path(storage_path, paste0(prefix, "_", server_key, ".csv"))
   }
 
-  message("========================================================")
-  message("  STARTING DATA CONSOLIDATION")
-  message("========================================================")
+  if (verbose == TRUE) {
+    message("========================================================")
+    message("  STARTING DATA CONSOLIDATION")
+    message("========================================================")
+  }
 
   for (server_key in active_servers) {
     server_display <- toupper(server_key)
-    message(paste0("\n* Processing server: ", server_display))
+    if (verbose == TRUE) {
+      message(paste0("\n* Processing server: ", server_display))
+    }
 
     taxa_file <- get_filename("biologer_taxa", server_key)
     field_file <- get_filename("biologer_field_observations", server_key)
     literature_file <- get_filename("biologer_literature_observations", server_key)
 
+    # ========================================================
     # 1. Load and update Taxonomic data
+    # ========================================================
     if (!file.exists(taxa_file)) {
       message(paste0("  - Skipping ", server_display, ": Taxonomic file is missing, use get_biologer_data()"))
       next
@@ -752,7 +748,9 @@ open_data <- function(auto.download = TRUE) {
       taxa_df$vernacularName <- NA_character_
     }
 
+    # ========================================================
     # 2. Load and update Field data
+    # ========================================================
     if (file.exists(field_file)) {
       col_types <- c(dateIdentified = "character")
       field_df <- data.table::fread(
@@ -778,7 +776,7 @@ open_data <- function(auto.download = TRUE) {
           grepl("Photographed", types, fixed = TRUE),
           "StillImage",
           fifelse(
-            grepl("Observed|Call|Exuviae", types), # Use standard regex here
+            grepl("Observed|Call|Exuviae", types),
             "Event",
             NA_character_
           )
@@ -805,7 +803,9 @@ open_data <- function(auto.download = TRUE) {
         NA_character_))))
       )]
 
-      message("  - Joining Field Observations with Taxonomy.")
+      if (verbose == TRUE) {
+        message("  - Joining Field Observations with Taxonomy.")
+      }
       field_merged <- merge(
         field_df,
         taxa_df,
@@ -816,10 +816,14 @@ open_data <- function(auto.download = TRUE) {
       )
       all_field_data[[server_key]] <- field_merged
     } else {
-      message("  - Field Observations file is missing!!!")
+      if (verbose == TRUE) {
+        message("  - Field Observations file is missing!!!")
+      }
     }
 
-    # Load and update Literature data
+    # ========================================================
+    # 3. Load and update Literature data
+    # ========================================================
     if (file.exists(literature_file)) {
       literature_df <- data.table::fread(
         literature_file,
@@ -835,7 +839,9 @@ open_data <- function(auto.download = TRUE) {
       literature_df$`dcterms:accessRights` <- "CC BY-SA 4.0"
       literature_df$`dcterms:license` <- "https://creativecommons.org/licenses/by-sa/4.0/"
 
-      message("  - Joining Literature Observations with Taxonomy.")
+      if (verbose == TRUE) {
+        message("  - Joining Literature Observations with Taxonomy.")
+      }
       literature_merged <- merge(
         literature_df,
         taxa_df,
@@ -846,43 +852,118 @@ open_data <- function(auto.download = TRUE) {
       )
       all_literature_data[[server_key]] <- literature_merged
     } else {
-      message("  - Literature Observations file is missing!!!")
+      if (verbose == TRUE) {
+        message("  - Literature Observations file is missing!!!")
+      }
     }
   }
 
-  message("\n* Merging data from all the servers.")
+  if (verbose == TRUE) {
+    message("\n* Merging data from all the servers.")
+  }
   merged_field_df <- data.table::rbindlist(all_field_data, fill = TRUE)
   merged_literature_df <- data.table::rbindlist(all_literature_data, fill = TRUE)
 
-  message("\n* Final consolidation of Field and Literature data.")
+  if (verbose == TRUE) {
+    message("\n* Final consolidation of Field and Literature data.")
+  }
   final_dataset <- data.table::rbindlist(list(merged_field_df, merged_literature_df), fill = TRUE)
 
-  message("\n--------------------------------------------------------")
-  message(paste0("Final dataset created with ", nrow(final_dataset), " rows and ", ncol(final_dataset), " columns."))
-  message("--------------------------------------------------------")
+  # Add eventDate and eventTime columns
+  required_date_cols <- c("year", "month", "day", "time")
+  for (col in required_date_cols) {
+    if (!(col %in% names(final_dataset))) {
+      final_dataset[, (col) := NA_integer_]
+    }
+  }
 
-  # Reorder columns
-  new_order <- c("id", "taxon.id", "kingdom", "subkingdom", "infrakingdom", "phylum",
-                 "subphylum", "class", "subclass", "order", "suborder", "infraorder",
-                 "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
-                 "specificEpithet", "species", "author", "infraspecificEpithet",
-                 "name", "acceptedNameUsage", "previousIdentifications", "rank",
-                 "vernacularName", "taxonomicStatus", "identifier", "dateIdentified",
-                 "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
-                 "dcterms:accessRights", "dcterms:license",
-                 "subspecies", "speciescomplex")
-  data.table::setcolorder(final_dataset, new_order)
+  final_dataset[, `:=`(
+    obs_year = year,
+    obs_month = data.table::fifelse(is.na(month), 1L, month),
+    obs_day = data.table::fifelse(is.na(day), 1L, day),
+    is_time_present = !is.na(time) & time != ""
+  )]
+
+  final_dataset[
+    is_time_present == TRUE,
+    datetime_local_str := paste(
+      paste(
+        obs_year,
+        sprintf("%02d", obs_month),
+        sprintf("%02d", obs_day),
+        sep = "-"
+      ),
+      time,
+      sep = " "
+    )
+  ]
+
+  final_dataset[
+    is_time_present == TRUE,
+    datetime_local := as.POSIXct(
+      paste0(datetime_local_str, ":00"),
+      format = "%Y-%m-%d %H:%M:%S",
+      tz = "Europe/Belgrade"
+    )
+  ]
+
+  final_dataset[
+    is_time_present == TRUE,
+    `:=`(
+      eventTime = format(datetime_local, format = "%H:%M:%S", tz = "UTC"),
+      eventDate = format(datetime_local, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+    )
+  ]
+
+  final_dataset[, date_part := data.table::fifelse(
+    # Case 1: Full date (Year, Month, Day) is known
+    !is_time_present & !is.na(day) & !is.na(month),
+    paste(obs_year, obs_month, obs_day, sep = "-"),
+    # Case 2: Only Month and Year are known ("2024-05")
+    data.table::fifelse(
+      !is_time_present & !is.na(month),
+      paste(obs_year, obs_month, sep = "-"),
+      # Case 3: Only Year is known ("2024")
+      data.table::fifelse(!is_time_present, as.character(obs_year), NA_character_)
+    )
+  )]
+
+  final_dataset[
+    is_time_present == FALSE,
+    `:=`(
+      eventTime = NA_character_,
+      eventDate = date_part
+    )
+  ]
+
+  final_dataset[, `:=`(
+    datetime_local_str = NULL,
+    datetime_local = NULL,
+    date_part = NULL,
+    time = NULL
+  )]
+
+  if (verbose == TRUE) {
+    message("\n--------------------------------------------------------")
+    message(paste0("Final dataset created with ", nrow(final_dataset), " rows and ", ncol(final_dataset), " columns."))
+    message("--------------------------------------------------------")
+  }
 
   # Renaming dataset to fitt into the DarwinCore
   data.table::setnames(final_dataset,
                        c("id", "taxon.id", "author", "rank",
-                         "name", "identifier"),
+                         "name", "identifier", "latitude", "longitude",
+                         "accuracy"),
                        c("occurrenceID", "taxonID", "scientificNameAuthorship", "taxonRank",
-                         "scientificName", "identifiedBy"))
+                         "scientificName", "identifiedBy", "decimalLatitude", "decimalLongitude",
+                         "coordinateUncertaintyInMeters"))
 
   # Remove columns that we don't need
   columns_to_drop <- c("rank_level", "uses_atlas_codes", "ancestors_names", "license")
   final_dataset[, (columns_to_drop) := NULL]
+
+  # Reorder columns
+  data.table::setcolorder(final_dataset, DWC_COLUMN_ORDER)
 
   return(final_dataset)
 }

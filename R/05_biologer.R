@@ -1,24 +1,256 @@
+#' @title Filter Spatial Points Falling Within a Polygon
+#' @description This function filters observation data points (`data`) to return only
+#' those points that are geographically contained within the provided spatial polygon
+#' (`polygon`). It handles automatic conversion of raw data into an sf object and ensures
+#' Coordinate Reference Systems (CRS) match before performing the spatial join.
+#'
+#' @param polygon An object of class \code{sf} (or coercible to \code{sf}) representing
+#' the area of interest (the spatial filter). Must be provided.
+#' @param data A \code{data.table} or \code{sf} object containing observation points.
+#' If \code{NULL}, the full dataset is loaded via \code{open_data()}. The data must contain
+#' columns named 'decimalLongitude' and 'decimalLatitude' if passed as a \code{data.table}.
+#' @param verbose Logical. If \code{TRUE}, messages about automatic data loading, CRS
+#' conversion, and data conversion are printed. Defaults to \code{FALSE}.
+#'
+#' @return An object of class \code{sf} containing only the points from the input
+#' \code{data} that fall strictly within the \code{polygon}.
+#'
+#' @details The function uses \code{sf::st_within} with \code{left = FALSE} to
+#' ensure only points entirely inside the polygon are returned, and only once.
+#' If the CRS of the \code{polygon} and \code{points} do not match, the
+#' \code{polygon} is transformed to match the \code{points}' CRS.
+#'
+#' @importFrom sf st_crs st_transform st_as_sf st_join st_within st_sf st_zm
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Assuming 'my_polygon_sf' is a pre-loaded sf polygon and 'my_data_dt' is a data.table
+#'
+#' # 1. Filter a pre-loaded data.table
+#' filtered_data <- points_in_polygon(polygon = my_polygon_sf, data = my_data_dt)
+#'
+#' # 2. Filter the full dataset (data = NULL)
+#' filtered_full <- points_in_polygon(polygon = my_polygon_sf, verbose = TRUE)
+#' }
+points_in_polygon <- function(polygon = NULL, data = NULL, verbose = FALSE) {
+  if (is.null(polygon)) {
+    stop("You myst provide a spatial polygon to extract points from it.", call. = FALSE)
+  }
 
+  if (is.null(data)) {
+    if (verbose == TRUE) {
+      message("No data specified, RBiologer will process the full dataset...")
+    }
+    data <- open_data(verbose = verbose)
+  }
 
-#get_data_from_simple_api(paste0(as.character(urls[1]), "/taxa/147"), as.character(tokens[1]))
-#t1 <- get_data_from_simple_api(
-#  paste0(as.character(urls[1]), "/public-field-observations?page=1&per_page=100&updated_after=0"),
-#  as.character(tokens[1]))
-#write.csv(t1, file = "~/KURAC.csv")
-#values <- trimws(unlist(strsplit(t1$activity, ",")))
-#  h <- curl::new_handle()
-#  curl::handle_setheaders(h, Authorization = paste("Bearer", as.character(tokens[1])), Accept = "application/json")
-#  result <- curl::curl_fetch_memory(paste0(as.character(urls[1]), "/biologer_field_observations?page=1&per_page=10&updated_after=0"), handle = h)
+  ########################################################
+  # Preparing the data points
+  ########################################################
 
-#t1 <- get_data_from_simple_api(
-#  paste0(as.character(urls[1]), "/literature-observations?page=1&per_page=100&updated_after=0"),
-#  as.character(tokens[1]))
+  if (inherits(data, "sf")) {
+    if (verbose == TRUE) {
+      message("Poits are already given as sf object.")
+    }
+    points_data <- data
+  } else {
+    if (verbose == TRUE) {
+      message("Points are given as data.frame or data.table > converting into sf points.")
+    }
+    points_data <- st_as_sf(
+      data,
+      coords = c("decimalLongitude", "decimalLatitude"),
+      crs = 4326
+    )
+  }
 
-#t1 <- get_data_from_simple_api(
-#  paste0(as.character(urls[3]), "/public-field-observations?page=1&per_page=100&updated_after=0"),
-#  as.character(tokens[3]))
-#head(str(t1))
-#t1[1, ]
+  ########################################################
+  # Preparing the polygons
+  ########################################################
+
+  if (inherits(polygon, "sfc") && !inherits(polygon, "sf")) {
+    if (verbose == TRUE) message("Input polygon is a geometry set (sfc). Converting to sf object.")
+    polygon <- st_sf(geometry = polygon)
+  }
+
+  if (!inherits(polygon, "sf")) {
+    polygon <- st_as_sf(polygon)
+  }
+
+  polygon <- st_zm(polygon, drop = TRUE, what = "ZM")
+
+  if (st_crs(points_data) != st_crs(polygon)) {
+    if (verbose == TRUE) {
+      message("CRS of the points and polygon does not match. Converting the polygon.")
+    }
+    polygon <- st_transform(polygon, st_crs(points_data))
+  }
+
+  if (verbose == TRUE) {
+    message(paste0("Performing spatial join: ",
+                   nrow(points_data), " points (CRS:",
+                   st_crs(points_data)$epsg, ") vs. ",
+                   length(polygon), " polygon (CRS:",
+                   st_crs(polygon)$epsg, ")."))
+  }
+
+  st_join(x = points_data,
+          y = polygon,
+          join = st_within,
+          left = FALSE)
+}
+
+#' @title Filter and Standardize Data Based on License Restrictions
+#' @description
+#' This function processes observation data, applying license-based filters and
+#' coordinate coarsening to meet data access requirements. It removes fully closed data,
+#' coarsens coordinates for geographically limited data, and manages a 3-year time embargo
+#' by updating licenses or removing observations that are still restricted.
+#'
+#' @param data A \code{data.table} or \code{data.frame} containing observation records. If
+#' \code{NULL}, the full dataset is loaded via \code{open_data()}. The data must contain 'year',
+#' 'month', 'day', 'mgrs10k', 'decimalLongitude', 'decimalLatitude', 'dcterms:accessRights',
+#' and 'dcterms:license' columns.
+#' @param verbose Logical. If \code{TRUE}, messages about automatic data loading are printed.
+#' Defaults to \code{FALSE}.
+#'
+#' @return A \code{data.table} containing only the records that are publicly available (open
+#' access or embargo passed), with coordinates coarsened for geographically restricted data.
+#'
+#' @details The function performs three main actions:
+#' \enumerate{
+#'   \item **Removal:** Data with \code{dcterms:accessRights} set to "Closed" are permanently removed.
+#'   \item **Coarsening:** Data with "CC BY-NC-SA 4.0 (limited coordinates)" are spatially
+#'          protected by replacing 'decimalLongitude' and 'decimalLatitude' with the centroid of the
+#'          MGRS 10x10 km grid cell, and setting \code{coordinateUncertaintyInMeters} to
+#'          7071m. \strong{Requires the \code{mgrs} package.}
+#'   \item **Embargo Management:** Data with "CC BY-SA 4.0 (closed for 3 years)" are checked against
+#'          the current date. If 3 years have passed, the access rights and license are updated to "CC BY-SA 4.0".
+#'          If the embargo is ongoing, the records are permanently removed.
+#' }
+#'
+#' @import data.table
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Assuming 'my_data' is a data.table loaded from a Biologer server
+#' processed_data <- filter_data_by_license(data = my_data)
+#'
+#' # Process the full dataset with verbose output
+#' full_processed_data <- filter_data_by_license(verbose = TRUE)
+#' }
+filter_data_by_license <- function(data = NULL, verbose = FALSE) {
+  coarse_uncertainty <- 7000L # Precission of the UTM centroid
+  current_date <- Sys.Date()
+  embargo_years <- 3
+  closed_access <- "Closed"
+  geographically_limited_access <- "CC BY-NC-SA 4.0 (limited coordinates)"
+  temporary_limited_access <- "CC BY-SA 4.0 (closed for 3 years)"
+  new_access_rights <- "CC BY-SA 4.0"
+  new_license_url <- "https://creativecommons.org/licenses/by-sa/4.0/"
+  data_no <- nrow(data)
+
+  if (is.null(data)) {
+    if (verbose == TRUE) {
+      message("No data specified, RBiologer will process the full dataset...")
+    }
+    data <- open_data(verbose = verbose)
+  }
+
+  if (inherits(data, "data.frame") && !inherits(data, "data.table")) {
+    data.table::setDT(data)
+  }
+
+  # Part 1. Completely remove data with restricted license
+  if (verbose == TRUE) {
+    message(paste0("Removing ", sum(data$`dcterms:accessRights` == closed_access),
+                     " data with closed license."))
+  }
+  data <- data[`dcterms:accessRights` != closed_access]
+
+  # Part 2. Get the polygon centroids for restricred data
+  idx_coarse <- which(data$`dcterms:accessRights` == geographically_limited_access)
+  if (length(idx_coarse) > 0) {
+    if (verbose == TRUE) {
+      message(paste0("Processing ", length(idx_coarse),
+                     " geographically restricted records."))
+    }
+    coarse_subset <- data[idx_coarse]
+    if ("geometry" %in% names(coarse_subset)) {
+      # A: Input is a data.table subset *from* an sf object (has geometry column)
+      coarse_data_for_centroid <- sf::st_as_sf(
+        coarse_subset,
+        wkt = "geometry",
+        crs = 4326,
+        remove = FALSE
+      )
+    } else if ("decimalLongitude" %in% names(coarse_subset) && "decimalLatitude" %in% names(coarse_subset)) {
+      # B: Input is a standard data.table with required coordinate columns
+      coarse_data_for_centroid <- sf::st_as_sf(
+        coarse_subset,
+        coords = c("decimalLongitude", "decimalLatitude"),
+        crs = 4326,
+        remove = FALSE
+      )
+    } else {
+      # Error handling if the required columns are missing
+      stop("Could not find a 'geometry' column or 'decimalLatitude'/'decimalLongitude' columns for coarsening.",
+           call. = FALSE)
+    }
+    coarsened_data <- add_utm_centroid(
+      data = coarse_data_for_centroid,
+      cell_size = 10000
+    )
+    data[idx_coarse, `:=`(
+      decimalLongitude = coarsened_data$mgrs10k_centroid_lon,
+      decimalLatitude  = coarsened_data$mgrs10k_centroid_lat,
+      coordinateUncertaintyInMeters  = coarse_uncertainty
+    )]
+  } else if (verbose == TRUE) {
+    message("No records found with geographically restricted license for coarsening.")
+  }
+
+  # Part 3. Make data restricted for 3 years open after 3 years
+  message(paste0("Processing ", sum(data$`dcterms:accessRights` == temporary_limited_access),
+                   " data closed for 3 years."))
+  if (nrow(data[`dcterms:accessRights` == temporary_limited_access]) > 0) {
+    data[`dcterms:accessRights` == temporary_limited_access,
+         `:=`(
+           # Default missing month and day to 1 for calculation safety
+           obs_month = data.table::fifelse(is.na(month), 1L, month),
+           obs_day = data.table::fifelse(is.na(day), 1L, day)
+         )]
+    # Calculate embargo end date based on the safest available date
+    data[`dcterms:accessRights` == temporary_limited_access,
+         `:=`(
+           observation_date = as.Date(paste(year, obs_month, obs_day, sep = "-")),
+           embargo_end_date = as.Date(
+             format(as.Date(paste(year, obs_month, obs_day, sep = "-")), "%Y-%m-%d")
+           ) + as.difftime(embargo_years * 365.25, units = "days")
+         )]
+    # Update the data (make open if embargo period is over)
+    data[embargo_end_date < current_date,
+         `:=`(
+           `dcterms:accessRights` = new_access_rights,
+           `dcterms:license` = new_license_url
+         )]
+    # Delete records where the data is still restricted
+    data <- data[!(
+      `dcterms:accessRights` == temporary_limited_access & embargo_end_date >= current_date
+    )]
+    data[, `:=`(observation_date = NULL, embargo_end_date = NULL, obs_month = NULL, obs_day = NULL)]
+  }
+
+  if (verbose == TRUE) {
+    message(paste0("A total of ", nrow(data), " data remain after processing (of the ",
+                   data_no, " data before)"))
+  }
+
+  data
+}
+
 
 #' Subset Biologer Data
 #'
