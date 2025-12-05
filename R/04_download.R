@@ -97,15 +97,25 @@ collapse_translations <- function(translations_df) {
   paste(translated_pairs, collapse = "|")
 }
 
-#' Collapse nested 'stages' data frame into a semicolon-separated string of stage names.
-#' @param stages_df A data frame containing 'name' column, or an empty list/data frame.
+#' Collapse nested 'stages' data frame into a separated string of stage names.
+#' @description
+#' The output format is 'ID=Name', e.g., '5=egg|4=adult'.
+#' @param stages_df A data frame containing 'id' and 'name' columns, or an empty list/data frame.
 #' @keywords internal
 collapse_stages <- function(stages_df) {
-  if (is.data.frame(stages_df) && nrow(stages_df) > 0 && "name" %in% names(stages_df)) {
-    paste(stages_df$name, collapse = "|")
+
+  if (is.data.frame(stages_df) &&
+        nrow(stages_df) > 0 &&
+        "name" %in% names(stages_df) &&
+        "id" %in% names(stages_df)) {
+
+    id_name_pairs <- paste(stages_df$id, stages_df$name, sep = "=")
+    paste(id_name_pairs, collapse = "|")
+
   } else {
     ""
   }
+
 }
 
 #' Collapse nested 'synonyms' data frame into a semicolon-separated string of names.
@@ -260,6 +270,46 @@ latest_identification_date <- function(activity_df) {
   formatted_date
 }
 
+#' @title Extracts the absolute latest 'created_at' date from any activity event.
+#' @description
+#' Finds the latest 'created_at' date regardless of the event type (identification, 
+#' comment, etc.) and formats it to the preferred ISO 8601 UTC format.
+#'
+#' @param activity_df A data frame containing activity records for a single observation.
+#' @return The latest 'created_at' date string formatted to 'YYYY-MM-DDTHH:MM:SSZ', or NA if none are found.
+#' @keywords internal
+latest_activity_date <- function(activity_df) {
+  if (!is.data.frame(activity_df) || nrow(activity_df) == 0 || !("created_at" %in% names(activity_df))) {
+    return(NA_character_)
+  }
+
+  # Find the maximum 'created_at' date across ALL rows
+  latest_date_str <- max(activity_df$created_at, na.rm = TRUE)
+
+  if (is.infinite(latest_date_str) || is.na(latest_date_str)) {
+    return(NA_character_)
+  }
+
+  # Clean and format the date string to ensure consistency (removes sub-second decimals)
+  cleaned_date_str <- sub("\\.\\d+Z$", "Z", latest_date_str)
+
+  # Parse the date string, specifying it is already in UTC
+  latest_date_utc <- as.POSIXct(
+    cleaned_date_str,
+    format = "%Y-%m-%dT%H:%M:%S",
+    tz = "UTC"
+  )
+
+  # Format the date back into the desired Darwon Core / ISO 8601 string
+  formatted_date <- format(
+    latest_date_utc,
+    format = "%Y-%m-%dT%H:%M:%SZ",
+    tz = "UTC"
+  )
+
+  formatted_date
+}
+
 #' Formats a list of publication authors into a standard citation string.
 #'
 #' @param authors_list A list column element containing a data frame of authors
@@ -296,6 +346,68 @@ format_authors <- function(authors_list) {
   }
 }
 
+#' @title Creates a unique ID-to-Name map from all stage definitions in the taxonomy table.
+#' @description
+#' Parses the 'stages' column (assumed format ID=Name|ID=Name) and builds a map.
+#'
+#' @param taxa_df data.table containing the 'stages' column with stage definitions.
+#' @return Named character vector (Stage ID -> Stage Name).
+create_stage_map <- function(taxa_df) {
+  if (!("stages" %in% names(taxa_df))) {
+    return(c())
+  }
+
+  # 1. Select and clean the stage definitions
+  stage_defs <- na.omit(unique(taxa_df$stages))
+  if (length(stage_defs) == 0) {
+    return(c())
+  }
+
+  # 2. Split all definitions into single ID=Name pairs
+  all_pairs <- unlist(strsplit(stage_defs, "|", fixed = TRUE))
+
+  # 3. Split pairs into IDs and Names
+  all_ids <- sub("=.*", "", all_pairs)
+  all_names <- sub(".*=", "", all_pairs)
+
+  # 4. Create the final named vector map, prioritizing unique keys
+  # (Use rev() to prioritize later definitions, or keep unique(.) to prioritize first)
+  stage_id_map <- setNames(
+    object = all_names, 
+    nm = as.character(all_ids)
+  )
+
+  # Remove duplicates, keeping the last unique definition
+  stage_id_map[!duplicated(names(stage_id_map), fromLast = TRUE)]
+}
+
+#' @title Maps stage IDs to names and formats the Darwin Core 'lifeStage' column.
+#' @description
+#' Uses a dynamic ID->Name map to convert the single stage ID from the 'stage_id'
+#' column into the appropriate Darwin Core 'lifeStage' name. The function modifies
+#' the input data.table 'dt' by reference.
+#'
+#' @param dt data.table object containing the single numeric ID in 'stage_id' column.
+#' @param stage_id_map Named character vector where names are the numeric IDs (character
+#'        type) and values are the stage names.
+#' @return The modified data.table (returned by reference and invisibly).
+#' @import data.table
+map_stages_to_lifestage <- function(data, stage_id_map) {
+  # 1. Map IDs to Names
+  if (!("stage_id" %in% names(data))) {
+    data[, lifeStage := NA_character_]
+    data[, `:=`(stages = NULL)] # Clean up 'stages'
+    return(invisible(data))
+  }
+  data[, temp_ids := as.character(stage_id)] # Ensure it is a character
+  data[, lifeStage := stage_id_map[temp_ids]]
+
+  # 2. Cleanup
+  data[, `:=`(temp_ids = NULL)]
+
+  invisible(data)
+}
+
 #' Display dynamic, single-line progress update in the console.
 #'
 #' @param records_fetched The total number of records fetched so far.
@@ -310,7 +422,7 @@ display_progress <- function(records_fetched, total_records) {
       progress_percentage <- round(records_fetched / total_records * 100, 1)
       output_string <- paste0(
         output_string,
-        "Fetched ",
+        "Downloading ",
         format(records_fetched, big.mark = ","), "/",
         format(total_records, big.mark = ","),
         " records (",
@@ -320,7 +432,7 @@ display_progress <- function(records_fetched, total_records) {
       # Total_records is unknown or zero
       output_string <- paste0(
         output_string,
-        "Fetched ",
+        "Downloaded ",
         format(records_fetched, big.mark = ","),
         " records so far."
       )
@@ -339,7 +451,7 @@ display_progress <- function(records_fetched, total_records) {
         " (", progress_percentage, "%)"
       )
     } else {
-      message("Progress: Fetched ", format(records_fetched, big.mark = ","), " records so far.")
+      message("Progress: Downloaded ", format(records_fetched, big.mark = ","), " records so far.")
     }
   }
 }
@@ -486,11 +598,19 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
         latest_identification_date
       ))
 
-      # 2. Extract and the list of old taxon names
+      # 2. Extract the list of old taxon names
       current_page_data$previousIdentifications <- unlist(lapply(
         current_page_data$activity,
         collapse_activity_taxa_changes
       ))
+
+      # 3. Extract the latest modification date
+      current_page_data$modified <- unlist(lapply(
+        current_page_data$activity,
+        latest_activity_date
+      ))
+
+      # 4. Remove obsolete column
       current_page_data$activity <- NULL
     }
 
@@ -549,7 +669,7 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
 #' @param token JWT authorization token.
 #' @keywords internal
 #' @export
-get_data_from_simple_api <- function(api_url, token) {
+get_data_from_simple_api <- function(api_url, token, filename = NULL) {
 
   repeat {
 
@@ -576,7 +696,12 @@ get_data_from_simple_api <- function(api_url, token) {
     }
 
     data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
-    return(data$data)
+    if (is.null(filename)) {
+      return(data$data)
+    } else {
+      data.table::fwrite(data$data, file = filename)
+    }
+
   }
 }
 
@@ -614,9 +739,12 @@ get_biologer_data <- function(verbose = TRUE) {
     # File suffix is now server-specific (e.g., _rs.csv)
     file_suffix <- paste0("_", server_key, ".csv")
 
-    # --- Step 1/3: Downloading Field Observation data ---
+    # ========================================================
+    # 1. Downloading Field Observation data
+    # ========================================================
+
     if (verbose == TRUE) {
-      message(paste0("* Step 1/3 [", server_display, "]: Downloading Field Observation data."))
+      message(paste0("* Step 1 [", server_display, "]: Downloading Field Observation data."))
     }
     get_data_from_api(
       api_url = paste0(server_url, "/public-field-observations"),
@@ -627,9 +755,12 @@ get_biologer_data <- function(verbose = TRUE) {
       verbose = verbose
     )
 
-    # --- Step 2/3: Downloading Literature Observation data ---
+    # ========================================================
+    # 2. Downloading Literature Observation data
+    # ========================================================
+
     if (verbose == TRUE) {
-      message(paste0("* Step 2/3 [", server_display, "]: Downloading Literature Observation data."))
+      message(paste0("* Step 2 [", server_display, "]: Downloading Literature Observation data."))
     }
     get_data_from_api(
       api_url = paste0(server_url, "/literature-observations"),
@@ -640,9 +771,12 @@ get_biologer_data <- function(verbose = TRUE) {
       verbose = verbose
     )
 
-    # --- Step 3/3: Downloading Taxonomic data ---
+    # ========================================================
+    # 3. Downloading Taxonomic data
+    # ========================================================
+
     if (verbose == TRUE) {
-      message(paste0("* Step 3/3 [", server_display, "]: Downloading Taxonomic data."))
+      message(paste0("* Step 3 [", server_display, "]: Downloading Taxonomic data."))
     }
     get_data_from_api(
       api_url = paste0(server_url, "/taxa"),
@@ -652,6 +786,7 @@ get_biologer_data <- function(verbose = TRUE) {
       columns_to_keep = TAXA_COLUMNS,
       verbose = verbose
     )
+
   }
 
   if (verbose == TRUE) {
@@ -736,8 +871,13 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
       next
     }
     taxa_df <- data.table::fread(taxa_file, stringsAsFactors = FALSE, fill = TRUE)
+    taxa_df[rank == "speciescomplex", rank := "species complex"] # Fix wrong naming
     taxa_df <- get_parent_taxa(taxa_df)
-    # Add other required columns
+    taxa_df[, taxonomicStatus := data.table::fifelse(
+      rank == "species complex",
+      "unaccepted",
+      "accepted"
+    )]
     if ("translations" %in% names(taxa_df)) {
       locale_code <- "en"
       pattern <- paste0("^.*(?:\\||^)", locale_code, "=(.*?)(?:\\||$).*$")
@@ -746,6 +886,10 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
       taxa_df[vernacularName == "", vernacularName := NA_character_]
     } else {
       taxa_df$vernacularName <- NA_character_
+    }
+    stage_id_map <- create_stage_map(taxa_df)
+    if (verbose && length(stage_id_map) > 0) {
+      message(paste0("  - Stage map created with ", length(stage_id_map), " unique entries."))
     }
 
     # ========================================================
@@ -760,8 +904,12 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
         colClasses = col_types
       )
       # Add other required columns
+      if (length(stage_id_map) > 0) {
+        field_df <- map_stages_to_lifestage(field_df, stage_id_map)
+      } else {
+        field_df[, lifeStage := NA_character_]
+      }
       field_df$basisOfRecord <- "HumanObservation"
-      field_df$taxonomicStatus <- "valid"
       if ("types" %in% names(field_df)) {
         field_df[, typeOfRecord := fifelse(
           grepl("Photographed", types, fixed = TRUE),
@@ -786,22 +934,25 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
         field_df$`dcterms:type` <- NA_character_
       }
       field_df[, `dcterms:rightsHolder` := paste0("biologer.", server_key, " community")]
-      field_df[, `dcterms:accessRights` := fifelse(
-        license == 10, "CC BY-SA 4.0",
-        fifelse(license == 20, "CC BY-NC-SA 4.0",
-        fifelse(license == 30, "CC BY-NC-SA 4.0 (limited coordinates)",
-        fifelse(license == 35, "CC BY-SA 4.0 (closed for 3 years)",
-        fifelse(license == 40, "Closed",
-        NA_character_)))))
+      field_df[, `dcterms:accessRights` :=
+        fifelse(
+                license == 10, "CC BY-SA 4.0",
+                fifelse(license == 20, "CC BY-NC-SA 4.0",
+                fifelse(license == 30, "CC BY-NC-SA 4.0 (limited coordinates)",
+                fifelse(license == 35, "CC BY-SA 4.0 (closed for 3 years)",
+                fifelse(license == 40, "Closed",
+                NA_character_)))))
       ]
-      field_df[, `dcterms:license` := fifelse(
-        license == 10, "https://creativecommons.org/licenses/by-sa/4.0/",
-        fifelse(license == 20, "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-        fifelse(license == 30, paste0("https://biologer.", server_key, "/licenses/partially-open-data-license"),
-        fifelse(license == 35, paste0("https://biologer.", server_key, "/licenses/temporarily-closed-data-license"),
-        fifelse(license == 40, paste0("https://biologer.", server_key, "/licenses/closed-data-license"),
-        NA_character_))))
-      )]
+      field_df[, `dcterms:license` :=
+        fifelse(
+          license == 10, "https://creativecommons.org/licenses/by-sa/4.0/",
+          fifelse(license == 20, "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+          fifelse(license == 30, paste0("https://biologer.", server_key, "/licenses/partially-open-data-license"),
+          fifelse(license == 35, paste0("https://biologer.", server_key, "/licenses/temporarily-closed-data-license"),
+          fifelse(license == 40, paste0("https://biologer.", server_key, "/licenses/closed-data-license"),
+          NA_character_))))
+        )
+      ]
 
       if (verbose == TRUE) {
         message("  - Joining Field Observations with Taxonomy.")
@@ -831,8 +982,12 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
         fill = TRUE
       )
       # Add other required columns
+      if (length(stage_id_map) > 0) {
+        literature_df <- map_stages_to_lifestage(literature_df, stage_id_map)
+      } else {
+        literature_df[, lifeStage := NA_character_]
+      }
       literature_df$basisOfRecord <- "Literature"
-      literature_df$taxonomicStatus <- "valid"
       literature_df$typeOfRecord <- NA_character_
       literature_df$`dcterms:type` <- "Text"
       literature_df[, `dcterms:rightsHolder` := paste0("biologer.", server_key, " community")]
@@ -858,6 +1013,10 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
     }
   }
 
+  # ========================================================
+  # 4. Merging data from all the servers
+  # ========================================================
+
   if (verbose == TRUE) {
     message("\n* Merging data from all the servers.")
   }
@@ -869,79 +1028,88 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
   }
   final_dataset <- data.table::rbindlist(list(merged_field_df, merged_literature_df), fill = TRUE)
 
-  # Add eventDate and eventTime columns
-  required_date_cols <- c("year", "month", "day", "time")
-  for (col in required_date_cols) {
-    if (!(col %in% names(final_dataset))) {
-      final_dataset[, (col) := NA_integer_]
-    }
-  }
+  # ========================================================
+  # 5. Add aditional columns to the final dataset
+  # ========================================================
 
-  final_dataset[, `:=`(
-    obs_year = year,
-    obs_month = data.table::fifelse(is.na(month), 1L, month),
-    obs_day = data.table::fifelse(is.na(day), 1L, day),
-    is_time_present = !is.na(time) & time != ""
+  # 1. Create the minimumElevationInMeters column
+  final_dataset[, minimumElevationInMeters := data.table::fifelse(
+    !is.na(minimum_elevation),
+    minimum_elevation,
+    elevation
   )]
 
-  final_dataset[
-    is_time_present == TRUE,
-    datetime_local_str := paste(
-      paste(
-        obs_year,
-        sprintf("%02d", obs_month),
-        sprintf("%02d", obs_day),
-        sep = "-"
-      ),
-      time,
-      sep = " "
-    )
-  ]
+  # 2. Create the maximumElevationInMeters column
+  final_dataset[, maximumElevationInMeters := data.table::fifelse(
+    !is.na(maximum_elevation) & (maximum_elevation != minimum_elevation),
+    maximum_elevation,
+    NA_real_
+  )]
 
-  final_dataset[
-    is_time_present == TRUE,
-    datetime_local := as.POSIXct(
-      paste0(datetime_local_str, ":00"),
-      format = "%Y-%m-%d %H:%M:%S",
-      tz = "Europe/Belgrade"
-    )
-  ]
-
-  final_dataset[
-    is_time_present == TRUE,
-    `:=`(
-      eventTime = format(datetime_local, format = "%H:%M:%S", tz = "UTC"),
-      eventDate = format(datetime_local, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
-    )
-  ]
-
-  final_dataset[, date_part := data.table::fifelse(
-    # Case 1: Full date (Year, Month, Day) is known
-    !is_time_present & !is.na(day) & !is.na(month),
-    paste(obs_year, obs_month, obs_day, sep = "-"),
-    # Case 2: Only Month and Year are known ("2024-05")
+  # Make the custom JSON term in dynamicProperties
+  final_dataset[, found_dead_note := as.character(found_dead_note)]
+  final_dataset[, project := as.character(project)]
+  final_dataset[, dynamicProperties_parts := ""]
+  # Add project name
+  final_dataset[!is.na(project) & project != "",
+                dynamicProperties_parts := paste0(dynamicProperties_parts, '"project": "', project, '"')]
+  # Add the dead comment and status
+  final_dataset[found_dead == TRUE,
+                dynamicProperties_parts := paste0(dynamicProperties_parts,
+                                                  data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
+                                                  '"organismCondition": "Dead"')]
+  final_dataset[!is.na(found_dead_note) & found_dead_note != "",
+                dynamicProperties_parts := paste0(dynamicProperties_parts,
+                                                  data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
+                                                  '"mortalityNote": "', found_dead_note, '"')]
+  final_dataset[dynamicProperties_parts != "",
+                dynamicProperties := paste0("{", dynamicProperties_parts, "}")]
+  final_dataset[dynamicProperties_parts == "", dynamicProperties := NA_character_]
+  # Get the atlas code for bird breeding and notes into a single column
+  final_dataset[, breeding_status := atlas_code_map[as.character(atlas_code)]]
+  final_dataset[, note := data.table::fifelse(
+    !is.na(breeding_status) & !is.na(note) & note != "",
+    paste0(note, " | Breeding Status: ", breeding_status),
     data.table::fifelse(
-      !is_time_present & !is.na(month),
-      paste(obs_year, obs_month, sep = "-"),
-      # Case 3: Only Year is known ("2024")
-      data.table::fifelse(!is_time_present, as.character(obs_year), NA_character_)
+      !is.na(breeding_status),
+      paste0("Breeding Status: ", breeding_status),
+      note
     )
   )]
 
-  final_dataset[
-    is_time_present == FALSE,
-    `:=`(
-      eventTime = NA_character_,
-      eventDate = date_part
-    )
-  ]
+  # Get the UTC dates correctly since they are in timezone Europe/Belgrade
+  process_biologer_dates_to_utc(final_dataset)
 
-  final_dataset[, `:=`(
-    datetime_local_str = NULL,
-    datetime_local = NULL,
-    date_part = NULL,
-    time = NULL
-  )]
+  # Get the data for literature records that only has year and month range
+  if ("collecting_start_year" %in% names(final_dataset)) {
+    # Step 1a: Construct the start date string (YYYY-MM or YYYY)
+    final_dataset[, eventDate_start_lit := data.table::fifelse(
+      !is.na(collecting_start_year) & !is.na(collecting_start_month),
+      paste0(collecting_start_year, "-", sprintf("%02d", collecting_start_month)), # YYYY-MM
+      as.character(collecting_start_year) # YYYY
+    )]
+
+    # Step 1b: Construct the end date string (YYYY-MM or YYYY)
+    final_dataset[, eventDate_end_lit := data.table::fifelse(
+      !is.na(collecting_end_year) & !is.na(collecting_end_month),
+      paste0(collecting_end_year, "-", sprintf("%02d", collecting_end_month)), # YYYY-MM
+      as.character(collecting_end_year) # YYYY
+    )]
+    # Step 2: Define the target range string (YYYY/YYYY or YYYY-MM/YYYY-MM)
+    final_dataset[, lit_date_range := data.table::fifelse(
+      # Start and end are different
+      !is.na(eventDate_start_lit) & !is.na(eventDate_end_lit) & (eventDate_start_lit != eventDate_end_lit),
+      paste0(eventDate_start_lit, "/", eventDate_end_lit),
+      # Start and end are the same
+      eventDate_start_lit
+    )]
+    # Update eventDate
+    final_dataset[, eventDate := data.table::fifelse(
+      is.na(eventDate) & !is.na(lit_date_range),
+      lit_date_range,
+      eventDate
+    )]
+  }
 
   if (verbose == TRUE) {
     message("\n--------------------------------------------------------")
@@ -953,13 +1121,27 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
   data.table::setnames(final_dataset,
                        c("id", "taxon.id", "author", "rank",
                          "name", "identifier", "latitude", "longitude",
-                         "accuracy"),
+                         "accuracy", "location", "photos",
+                         "observer", "number", "note", "found_on",
+                         "georeferenced_by",	"georeferenced_date",
+                         "original_date", "original_locality", "original_elevation", "original_coordinates",
+                         "original_identification", "original_identification_validity", "other_original_data",
+                         "place_where_referenced_in_publication", "publication.citation"),
                        c("occurrenceID", "taxonID", "scientificNameAuthorship", "taxonRank",
                          "scientificName", "identifiedBy", "decimalLatitude", "decimalLongitude",
-                         "coordinateUncertaintyInMeters"))
+                         "coordinateUncertaintyInMeters", "locality", "associatedMedia",
+                         "recordedBy", "individualCount", "occurrenceRemarks", "substrate",
+                         "georeferencedBy", "georeferencedDate",
+                         "verbatimEventDate", "verbatimLocality", "verbatimElevation", "verbatimCoordinates",
+                         "verbatimIdentification", "identificationVerificationStatus", "verbatimLabel",
+                         "occurrenceDetails", "bibliographicCitation"))
 
   # Remove columns that we don't need
-  columns_to_drop <- c("rank_level", "uses_atlas_codes", "ancestors_names", "license")
+  columns_to_drop <- c("rank_level", "uses_atlas_codes", "ancestors_names", "license", "stages", "stage_id",
+                       "elevation", "minimum_elevation", "maximum_elevation", "project", "found_dead",
+                       "found_dead_note", "dynamicProperties_parts", "taxon.name", "parent_id", "breeding_status",
+                       "collecting_start_year", "collecting_start_month", "collecting_end_year", "collecting_end_month",
+                       "eventDate_start_lit", "eventDate_end_lit", "lit_date_range")
   final_dataset[, (columns_to_drop) := NULL]
 
   # Reorder columns
@@ -1060,6 +1242,13 @@ get_parent_taxa <- function(data_table) {
   # Merge the new, fully populated rank columns back into DT
   result <- final_ranks_wide[DT, on = "RowID"]
 
+  # Remove the columns we don't need
+  redundant_rank_cols <- c("species", "subspecies", "species complex", "speciescomplex")
+  cols_to_remove <- intersect(names(result), redundant_rank_cols)
+  if (length(cols_to_remove) > 0) {
+    result[, (cols_to_remove) := NULL]
+  }
+
   # Clean up RowID
   result[, RowID := NULL]
 
@@ -1074,12 +1263,118 @@ get_parent_taxa <- function(data_table) {
   result[rank %in% "subspecies",
          infraspecificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)]
 
-  # Get the acceptedNameUsage column from name and author, but ass "subsp." for plants
+  # Get the acceptedNameUsage column from name and author
   result[, acceptedNameUsage := name]
   result[!is.na(author) & author != "",
          acceptedNameUsage := paste(name, author, sep = " ")]
+  result[rank == "species complex",
+         acceptedNameUsage := ""]
+
+  # Get the verbatimScientificName column from name and author, but ass "subsp." for plants
+  result[, verbatimScientificName := name]
+  result[!is.na(author) & author != "",
+         verbatimScientificName := paste(name, author, sep = " ")]
   result[kingdom == "Plantae" & rank == "subspecies" & !is.na(author) & author != "",
-         acceptedNameUsage := paste(name, author, sep = " subsp. ")]
+         verbatimScientificName := paste(name, author, sep = " subsp. ")]
 
   result
+}
+
+#' @title Process and Convert Biologer Dates to UTC
+#' @description
+#' Cleans raw year/month/day/time columns, converts local Belgrade time 
+#' (CET/CEST) to UTC, and formats the output into standard Darwin Core fields.
+#' Modifies the input data.table 'dt' by reference.
+#'
+#' @param dt data.table object containing 'year', 'month', 'day', and 'time' columns.
+#' @return The modified data.table (returned invisibly).
+#' @import data.table
+process_biologer_dates_to_utc <- function(dt) {
+  # --- 1. Initial Setup and Cleaning ---
+  # Add missing date columns (year, month, day, time) if they don't exist
+  required_date_cols <- c("year", "month", "day", "time")
+  for (col in required_date_cols) {
+    if (!(col %in% names(dt))) {
+      dt[, (col) := NA_integer_]
+    }
+  }
+
+  # Prepare observation date parts and presence flag
+  dt[, `:=`(
+    obs_year = year,
+    obs_month = data.table::fifelse(is.na(month), 1L, month),
+    obs_day = data.table::fifelse(is.na(day), 1L, day),
+    is_time_present = !is.na(time) & time != ""
+  )]
+
+  # --- 2. Local Timezone Parsing and UTC Conversion (for records with time) ---
+  # Combine date and time into a single string for parsing
+  dt[
+    is_time_present == TRUE,
+    datetime_local_str := paste(
+      paste(
+        obs_year,
+        sprintf("%02d", obs_month),
+        sprintf("%02d", obs_day),
+        sep = "-"
+      ),
+      time,
+      sep = " "
+    )
+  ]
+
+  # Parse local time (Belgrade tz, handling DST)
+  dt[
+    is_time_present == TRUE,
+    datetime_local := as.POSIXct(
+      paste0(datetime_local_str, ":00"),
+      format = "%Y-%m-%d %H:%M:%S",
+      tz = "Europe/Belgrade"
+    )
+  ]
+
+  # Format the UTC output from the parsed local time object
+  dt[
+    is_time_present == TRUE,
+    `:=`(
+      eventTime = format(datetime_local, format = "%H:%M:%S", tz = "UTC"),
+      eventDate = format(datetime_local, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+    )
+  ]
+
+  # --- 3. Date-Only Formatting (for records without time) ---
+  # Create date_part for YYYY, YYYY-MM, or YYYY-MM-DD
+  dt[, date_part := data.table::fifelse(
+    !is_time_present & !is.na(day) & !is.na(month),
+    paste(obs_year, obs_month, obs_day, sep = "-"),
+    data.table::fifelse(
+      !is_time_present & !is.na(month),
+      paste(obs_year, obs_month, sep = "-"),
+      data.table::fifelse(!is_time_present, as.character(obs_year), NA_character_)
+    )
+  )]
+
+  # Assign final values for date-only records
+  dt[
+    is_time_present == FALSE,
+    `:=`(
+      eventTime = NA_character_,
+      eventDate = date_part
+    )
+  ]
+
+  # --- 4. Cleanup ---
+  # Remove temporary and source columns
+  dt[, `:=`(
+    datetime_local_str = NULL,
+    datetime_local = NULL,
+    date_part = NULL,
+    obs_year = NULL,
+    obs_month = NULL,
+    obs_day = NULL,
+    is_time_present = NULL,
+    time = NULL
+  )]
+
+  invisible(dt)
 }

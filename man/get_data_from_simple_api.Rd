@@ -4,7 +4,7 @@
 \alias{get_data_from_simple_api}
 \title{Fetch simple data from the API that does not require pagination and timestamps}
 \usage{
-get_data_from_simple_api(api_url, token)
+get_data_from_simple_api(api_url, token, filename = NULL)
 }
 \arguments{
 \item{api_url}{URL of the Biologer API used to access the data.}

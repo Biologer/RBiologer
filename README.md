@@ -15,4 +15,7 @@ dataset_rs <- as.data.frame(open_data())
 
 ## Using the data
 
-The data gathered through the `open_data()` should be saved in DarwinCore standard (work in progress!) and made accessible by other RBiologer functions (also a work in progress) :)
+The data gathered through the `open_data()` is provided in standard DarwinCore standard and accessible by other RBiologer functions. You can use the following functions for data processing.
+
+* `points_in_polygon(polygon = area.sf)` allows you to select only the data found in certain area (i.e. your study region).
+* `filter_data_by_license()` returns only the publically available data according to the license choosen by the uses. Use this if you are an admin or editor before sharing the data to the world.

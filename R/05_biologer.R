@@ -166,12 +166,12 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
   # Part 1. Completely remove data with restricted license
   if (verbose == TRUE) {
     message(paste0("Removing ", sum(data$`dcterms:accessRights` == closed_access),
-                     " data with closed license."))
+                   " data with closed license."))
   }
   data <- data[`dcterms:accessRights` != closed_access]
 
   # Part 2. Get the polygon centroids for restricred data
-  idx_coarse <- which(data$`dcterms:accessRights` == geographically_limited_access)
+  idx_coarse <- which(data$`dcterms:accessRights` == geographically_limited_access | data$restricted == TRUE)
   if (length(idx_coarse) > 0) {
     if (verbose == TRUE) {
       message(paste0("Processing ", length(idx_coarse),
@@ -203,11 +203,33 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
       data = coarse_data_for_centroid,
       cell_size = 10000
     )
+
+    # Strip the coordinates
     data[idx_coarse, `:=`(
       decimalLongitude = coarsened_data$mgrs10k_centroid_lon,
       decimalLatitude  = coarsened_data$mgrs10k_centroid_lat,
       coordinateUncertaintyInMeters  = coarse_uncertainty
     )]
+
+    # Strip the date
+    if (verbose == TRUE) {
+      message("  - Stripping date and time precision for restricted records (Year-only).")
+    }
+    data[idx_coarse, `:=`(
+      dateIdentified = NA_character_,    # Remove full date of identification
+      eventTime = NA_character_,         # Remove time
+      eventDate = as.character(year),    # Restrict to Year only (e.g., "2023")
+      day = 0L,                          # Set Day to 0
+      month = 0L,                        # Set Month to 0
+      modified = NA_character_           # Remove modification timestamp
+    )]
+
+
+
+    # Add column dataGeneralizations for denoting the restricted data
+    data[, dataGeneralizations := NA_character_]
+    data[idx_coarse, `dataGeneralizations` :=
+           "Coordinates generalized to 10x10 km UTM centroid for privacy, date restricted."]
   } else if (verbose == TRUE) {
     message("No records found with geographically restricted license for coarsening.")
   }
@@ -234,7 +256,8 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
     data[embargo_end_date < current_date,
          `:=`(
            `dcterms:accessRights` = new_access_rights,
-           `dcterms:license` = new_license_url
+           `dcterms:license` = new_license_url,
+           dataGeneralizations = "Data was under 3-year embargo; released on embargo end date."
          )]
     # Delete records where the data is still restricted
     data <- data[!(
@@ -250,7 +273,6 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
 
   data
 }
-
 
 #' Subset Biologer Data
 #'

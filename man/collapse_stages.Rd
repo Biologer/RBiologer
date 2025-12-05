@@ -2,14 +2,14 @@
 % Please edit documentation in R/04_download.R
 \name{collapse_stages}
 \alias{collapse_stages}
-\title{Collapse nested 'stages' data frame into a semicolon-separated string of stage names.}
+\title{Collapse nested 'stages' data frame into a separated string of stage names.}
 \usage{
 collapse_stages(stages_df)
 }
 \arguments{
-\item{stages_df}{A data frame containing 'name' column, or an empty list/data frame.}
+\item{stages_df}{A data frame containing 'id' and 'name' columns, or an empty list/data frame.}
 }
 \description{
-Collapse nested 'stages' data frame into a semicolon-separated string of stage names.
+The output format is 'ID=Name', e.g., '5=egg|4=adult'.
 }
 \keyword{internal}

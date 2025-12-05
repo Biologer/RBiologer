@@ -27,7 +27,7 @@ LITERATURE_OBS_COLUMNS <- c(
   "original_identification_validity", "other_original_data", "collecting_start_year",
   "collecting_start_month", "collecting_end_year", "collecting_end_month",
   "taxon.id", "taxon.name",
-  "publication.id", "publication.year", "publication.authors"
+  "publication.id", "publication.year", "publication.authors", "publication.citation"
 )
 
 TAXA_COLUMNS <- c(
@@ -39,9 +39,37 @@ TAXA_COLUMNS <- c(
 DWC_COLUMN_ORDER <- c("occurrenceID", "taxonID", "kingdom", "subkingdom", "infrakingdom", "phylum",
                       "subphylum", "class", "subclass", "order", "suborder", "infraorder",
                       "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
-                      "specificEpithet", "species", "scientificNameAuthorship", "infraspecificEpithet",
+                      "specificEpithet", "scientificNameAuthorship", "infraspecificEpithet",
                       "scientificName", "acceptedNameUsage", "previousIdentifications", "taxonRank",
-                      "vernacularName", "taxonomicStatus", "identifiedBy", "dateIdentified",
+                      "vernacularName", "verbatimScientificName", "taxonomicStatus", "identifiedBy", "dateIdentified",
                       "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
-                      "dcterms:accessRights", "dcterms:license", "decimalLatitude", "decimalLongitude",
-                      "subspecies", "speciescomplex")
+                      "dcterms:accessRights", "dcterms:license", "recordedBy",
+                      "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters",
+                      "locality", "georeferencedBy", "georeferencedDate",
+                      "minimumElevationInMeters", "maximumElevationInMeters",
+                      "eventTime", "eventDate", "day", "month", "year", "modified",
+                      "lifeStage", "sex", "individualCount",
+                      "associatedMedia", "habitat", "substrate", "occurrenceRemarks", "dynamicProperties",
+                      "occurrenceDetails", "verbatimEventDate", "verbatimLocality", "verbatimElevation",
+                      "verbatimCoordinates", "verbatimIdentification", "identificationVerificationStatus",
+                      "verbatimLabel", "bibliographicCitation")
+
+atlas_code_map <- c(
+  "0"  = "Observed but suspected to be still on migration or to be summering non-breeder (Possible Breeding)",
+  "1"  = "Observed in breeding season in possible nesting habitat (Possible Breeding)",
+  "2"  = "Singing male(s) present (or breeding calls heard) in breeding season (Possible Breeding)",
+  "3"  = "Pair observed in suitable nesting habitat in breeding season (Probable Breeding)",
+  "4"  = "Permanent territory presumed (Probable Breeding)",
+  "5"  = "Courtship and display (Probable Breeding)",
+  "6"  = "Visiting probable nest site (Probable Breeding)",
+  "7"  = "Agitated behaviour or anxiety calls from adults (Probable Breeding)",
+  "8"  = "Brood patch on adult examined in the hand (Probable Breeding)",
+  "9"  = "Nest building or excavating nest-hole (Confirmed Breeding)",
+  "10" = "Distraction-display or injury-feigning (Confirmed Breeding)",
+  "11" = "Used nest or eggshells found (Confirmed Breeding)",
+  "12" = "Recently fledged young or downy young (Confirmed Breeding)",
+  "13" = "Adults entering or leaving nest-site indicating occupied nest or adult seen incubating (Confirmed Breeding)",
+  "14" = "Adult carrying faecal sac or food for young (Confirmed Breeding)",
+  "15" = "Nest containing eggs (Confirmed Breeding)",
+  "16" = "Nest with young seen or heard (Confirmed Breeding)"
+)
