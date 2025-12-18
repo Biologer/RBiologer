@@ -3,7 +3,8 @@ BIOLOGER_URLS <- c(
   "rs" = "https://biologer.rs/api",
   "hr" = "https://biologer.hr/api",
   "ba" = "https://biologer.ba/api",
-  "me" = "https://biologer.me/api"
+  "me" = "https://biologer.me/api",
+  "dev" = "https://dev.biologer.org/api"
 )
 
 FIELD_OBS_COLUMNS <- c(
