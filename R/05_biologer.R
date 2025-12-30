@@ -88,17 +88,21 @@ points_in_polygon <- function(polygon = NULL, data = NULL, verbose = FALSE) {
   }
 
   if (verbose == TRUE) {
-    message(paste0("Performing spatial join: ",
-                   nrow(points_data), " points (CRS:",
-                   st_crs(points_data)$epsg, ") vs. ",
-                   length(polygon), " polygon (CRS:",
-                   st_crs(polygon)$epsg, ")."))
+    message(paste0(
+      "Performing spatial join: ",
+      nrow(points_data), " points (CRS:",
+      st_crs(points_data)$epsg, ") vs. ",
+      length(polygon), " polygon (CRS:",
+      st_crs(polygon)$epsg, ")."
+    ))
   }
 
-  st_join(x = points_data,
-          y = polygon,
-          join = st_within,
-          left = FALSE)
+  st_join(
+    x = points_data,
+    y = polygon,
+    join = st_within,
+    left = FALSE
+  )
 }
 
 #' @title Filter and Standardize Data Based on License Restrictions
@@ -159,35 +163,58 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
     data <- open_data(verbose = verbose)
   }
 
+  # Ensure we are working on a copy, not the original dataset
+  data <- data.table::copy(data)
+
   if (inherits(data, "data.frame") && !inherits(data, "data.table")) {
     data.table::setDT(data)
   }
 
   # Part 1. Completely remove data with restricted license
   if (verbose == TRUE) {
-    message(paste0("Removing ", sum(data$`dcterms:accessRights` == closed_access),
-                   " data with closed license."))
+    message(paste0(
+      "Removing ", sum(data$`dcterms:accessRights` == closed_access),
+      " data with closed license."
+    ))
   }
-  data <- data[`dcterms:accessRights` != closed_access]
+  data <- data[get("dcterms:accessRights") != closed_access, ]
 
   # Part 2. Get the polygon centroids for restricred data
   idx_coarse <- which(data$`dcterms:accessRights` == geographically_limited_access | data$restricted == TRUE)
   if (length(idx_coarse) > 0) {
     if (verbose == TRUE) {
-      message(paste0("Processing ", length(idx_coarse),
-                     " geographically restricted records."))
+      message(paste0(
+        "Processing ", length(idx_coarse),
+        " geographically restricted records."
+      ))
     }
-    coarse_subset <- data[idx_coarse]
-    if ("geometry" %in% names(coarse_subset)) {
-      # A: Input is a data.table subset *from* an sf object (has geometry column)
+    coarse_subset <- data[idx_coarse, ]
+
+    if (inherits(coarse_subset, "sf")) {
+      # Input is sf
+      coords <- sf::st_coordinates(coarse_subset)
+      coarse_subset$decimalLongitude <- coords[, "X"]
+      coarse_subset$decimalLatitude <- coords[, "Y"]
+      coarse_data_for_centroid <- coarse_subset
+    } else if ("geometry" %in% names(coarse_subset)) {
+      # Input is a data.table with geometry column
+      if (inherits(coarse_subset$geometry, "sfc")) {
+        temp_sfc <- coarse_subset$geometry
+      } else {
+        temp_sfc <- sf::st_as_sfc(coarse_subset$geometry, crs = 4326)
+      }
+      coords <- sf::st_coordinates(temp_sfc)
+      coarse_subset$decimalLongitude <- coords[, "X"]
+      coarse_subset$decimalLatitude <- coords[, "Y"]
+
       coarse_data_for_centroid <- sf::st_as_sf(
-        coarse_subset,
-        wkt = "geometry",
+        as.data.frame(coarse_subset),
+        coords = c("decimalLongitude", "decimalLatitude"),
         crs = 4326,
         remove = FALSE
       )
     } else if ("decimalLongitude" %in% names(coarse_subset) && "decimalLatitude" %in% names(coarse_subset)) {
-      # B: Input is a standard data.table with required coordinate columns
+      # Input is standard data.table with decimalLongitude and decimalLatitude
       coarse_data_for_centroid <- sf::st_as_sf(
         coarse_subset,
         coords = c("decimalLongitude", "decimalLatitude"),
@@ -195,9 +222,9 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
         remove = FALSE
       )
     } else {
-      # Error handling if the required columns are missing
       stop("Could not find a 'geometry' column or 'decimalLatitude'/'decimalLongitude' columns for coarsening.",
-           call. = FALSE)
+        call. = FALSE
+      )
     }
     coarsened_data <- add_utm_centroid(
       data = coarse_data_for_centroid,
@@ -207,8 +234,8 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
     # Strip the coordinates
     data[idx_coarse, `:=`(
       decimalLongitude = coarsened_data$mgrs10k_centroid_lon,
-      decimalLatitude  = coarsened_data$mgrs10k_centroid_lat,
-      coordinateUncertaintyInMeters  = coarse_uncertainty
+      decimalLatitude = coarsened_data$mgrs10k_centroid_lat,
+      coordinateUncertaintyInMeters = coarse_uncertainty
     )]
 
     # Strip the date
@@ -216,59 +243,75 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
       message("  - Stripping date and time precision for restricted records (Year-only).")
     }
     data[idx_coarse, `:=`(
-      dateIdentified = NA_character_,    # Remove full date of identification
-      eventTime = NA_character_,         # Remove time
-      eventDate = as.character(year),    # Restrict to Year only (e.g., "2023")
-      day = 0L,                          # Set Day to 0
-      month = 0L,                        # Set Month to 0
-      modified = NA_character_           # Remove modification timestamp
+      dateIdentified = NA_character_, # Remove full date of identification
+      eventTime = NA_character_, # Remove time
+      eventDate = as.character(year), # Restrict to Year only (e.g., "2023")
+      day = 0L, # Set Day to 0
+      month = 0L, # Set Month to 0
+      modified = NA_real_ # Remove modification timestamp
     )]
 
-
+    # For sf object we need to recreate geometry using new coordinates
+    if (inherits(data, "sf")) {
+      data <- sf::st_as_sf(as.data.frame(data), coords = c("decimalLongitude", "decimalLatitude"), crs = 4326, remove = FALSE)
+    }
 
     # Add column dataGeneralizations for denoting the restricted data
-    data[, dataGeneralizations := NA_character_]
+    if (!"dataGeneralizations" %in% names(data)) {
+      data[, dataGeneralizations := NA_character_]
+    }
     data[idx_coarse, `dataGeneralizations` :=
-           "Coordinates generalized to 10x10 km UTM centroid for privacy, date restricted."]
+      "Coordinates generalized to 10x10 km UTM centroid for privacy, date restricted."]
   } else if (verbose == TRUE) {
     message("No records found with geographically restricted license for coarsening.")
   }
 
   # Part 3. Make data restricted for 3 years open after 3 years
-  message(paste0("Processing ", sum(data$`dcterms:accessRights` == temporary_limited_access),
-                   " data closed for 3 years."))
+  message(paste0(
+    "Processing ", sum(data$`dcterms:accessRights` == temporary_limited_access),
+    " data closed for 3 years."
+  ))
   if (nrow(data[`dcterms:accessRights` == temporary_limited_access]) > 0) {
-    data[`dcterms:accessRights` == temporary_limited_access,
-         `:=`(
-           # Default missing month and day to 1 for calculation safety
-           obs_month = data.table::fifelse(is.na(month), 1L, month),
-           obs_day = data.table::fifelse(is.na(day), 1L, day)
-         )]
+    data[
+      `dcterms:accessRights` == temporary_limited_access,
+      `:=`(
+        # Default missing month and day to 1 for calculation safety
+        obs_month = data.table::fifelse(is.na(month), 1L, month),
+        obs_day = data.table::fifelse(is.na(day), 1L, day)
+      )
+    ]
     # Calculate embargo end date based on the safest available date
-    data[`dcterms:accessRights` == temporary_limited_access,
-         `:=`(
-           observation_date = as.Date(paste(year, obs_month, obs_day, sep = "-")),
-           embargo_end_date = as.Date(
-             format(as.Date(paste(year, obs_month, obs_day, sep = "-")), "%Y-%m-%d")
-           ) + as.difftime(embargo_years * 365.25, units = "days")
-         )]
+    data[
+      `dcterms:accessRights` == temporary_limited_access,
+      `:=`(
+        observation_date = as.Date(paste(year, obs_month, obs_day, sep = "-")),
+        embargo_end_date = as.Date(
+          format(as.Date(paste(year, obs_month, obs_day, sep = "-")), "%Y-%m-%d")
+        ) + as.difftime(embargo_years * 365.25, units = "days")
+      )
+    ]
     # Update the data (make open if embargo period is over)
-    data[embargo_end_date < current_date,
-         `:=`(
-           `dcterms:accessRights` = new_access_rights,
-           `dcterms:license` = new_license_url,
-           dataGeneralizations = "Data was under 3-year embargo; released on embargo end date."
-         )]
+    data[
+      embargo_end_date < current_date,
+      `:=`(
+        `dcterms:accessRights` = new_access_rights,
+        `dcterms:license` = new_license_url,
+        dataGeneralizations = "Data was under 3-year embargo; released on embargo end date."
+      )
+    ]
     # Delete records where the data is still restricted
-    data <- data[!(
-      `dcterms:accessRights` == temporary_limited_access & embargo_end_date >= current_date
-    )]
+    data <- data[
+      !(get("dcterms:accessRights") == temporary_limited_access &
+        embargo_end_date >= current_date),
+    ]
     data[, `:=`(observation_date = NULL, embargo_end_date = NULL, obs_month = NULL, obs_day = NULL)]
   }
 
   if (verbose == TRUE) {
-    message(paste0("A total of ", nrow(data), " data remain after processing (of the ",
-                   data_no, " data before)"))
+    message(paste0(
+      "A total of ", nrow(data), " data remain after processing (of the ",
+      data_no, " data before)"
+    ))
   }
 
   data
