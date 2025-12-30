@@ -2,8 +2,8 @@ Package: RBiologer
 Title: Connect to online Biologer API, download and analyse data
 Version: 0.0.0.9000
 Authors@R: c(
-    person("Miloš", "Popović", , "mpopovic@pmf.ni.ac.rs", role = c("aut", "cre")),
-    person("Tomislav", "Gojak", , "tomislav.gojak@hhdhyla.hr", role = c("aut")),
+    person("Miloš", "Popović", email = "mpopovic@pmf.ni.ac.rs", role = c("aut", "cre")),
+    person("Tomislav", "Gojak", email = "tomislav.gojak@hhdhyla.hr", role = "aut")
   )
 Description: Biologer R package is primarily used to connect to online API and download data.
   It could use any of officially supported servers (i.e. biologer.rs, biologer.hr, biologer.ba,
