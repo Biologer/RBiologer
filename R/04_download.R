@@ -103,19 +103,15 @@ collapse_translations <- function(translations_df) {
 #' @param stages_df A data frame containing 'id' and 'name' columns, or an empty list/data frame.
 #' @keywords internal
 collapse_stages <- function(stages_df) {
-
   if (is.data.frame(stages_df) &&
-        nrow(stages_df) > 0 &&
-        "name" %in% names(stages_df) &&
-        "id" %in% names(stages_df)) {
-
+    nrow(stages_df) > 0 &&
+    "name" %in% names(stages_df) &&
+    "id" %in% names(stages_df)) {
     id_name_pairs <- paste(stages_df$id, stages_df$name, sep = "=")
     paste(id_name_pairs, collapse = "|")
-
   } else {
     ""
   }
-
 }
 
 #' Collapse nested 'synonyms' data frame into a semicolon-separated string of names.
@@ -272,7 +268,7 @@ latest_identification_date <- function(activity_df) {
 
 #' @title Extracts the absolute latest 'created_at' date from any activity event.
 #' @description
-#' Finds the latest 'created_at' date regardless of the event type (identification, 
+#' Finds the latest 'created_at' date regardless of the event type (identification,
 #' comment, etc.) and formats it to the preferred ISO 8601 UTC format.
 #'
 #' @param activity_df A data frame containing activity records for a single observation.
@@ -373,7 +369,7 @@ create_stage_map <- function(taxa_df) {
   # 4. Create the final named vector map, prioritizing unique keys
   # (Use rev() to prioritize later definitions, or keep unique(.) to prioritize first)
   stage_id_map <- setNames(
-    object = all_names, 
+    object = all_names,
     nm = as.character(all_ids)
   )
 
@@ -550,7 +546,12 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
 
     # Add this page
     current_count <- nrow(data$data)
-    records_fetched <- records_fetched + current_count
+    if (is.null(current_count) || current_count == 0) {
+      message("No more new records returned by server. Finalizing...")
+      url <- NULL # This ensures the checkpoint logic below triggers the 'complete' state
+    } else {
+      records_fetched <- records_fetched + current_count
+    }
 
     # Display progress
     display_progress(records_fetched = records_fetched, total_records = total_records)
@@ -642,7 +643,7 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
     }
 
     url <- set_per_page(url = url)
-    #Sys.sleep(0.5)
+    # Sys.sleep(0.5)
   }
 
   # Remove duplicated entries (only keep the new ones)
@@ -651,9 +652,11 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
     is_duplicate <- duplicated(full_data$id, fromLast = TRUE)
     final_data <- full_data[!is_duplicate, ]
     if (nrow(full_data) > nrow(final_data)) {
-      message("Removing duplicated data to keep the new online changes. ",
-              "Total rows before: ", nrow(full_data), "; after: ",
-              nrow(final_data))
+      message(
+        "Removing duplicated data to keep the new online changes. ",
+        "Total rows before: ", nrow(full_data), "; after: ",
+        nrow(final_data)
+      )
       data.table::fwrite(final_data, file = filename)
     }
   }
@@ -670,9 +673,7 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
 #' @keywords internal
 #' @export
 get_data_from_simple_api <- function(api_url, token, filename = NULL) {
-
   repeat {
-
     h <- curl::new_handle()
     curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
     result <- curl::curl_fetch_memory(api_url, handle = h)
@@ -701,7 +702,6 @@ get_data_from_simple_api <- function(api_url, token, filename = NULL) {
     } else {
       data.table::fwrite(data$data, file = filename)
     }
-
   }
 }
 
@@ -719,13 +719,14 @@ get_biologer_data <- function(verbose = TRUE) {
   active_servers <- intersect(names(tokens), names(urls))
   if (length(active_servers) == 0) {
     stop("No active server credentials found. Please use 'biologer_login(server, token)' ",
-         "for at least one server.", call. = FALSE)
+      "for at least one server.",
+      call. = FALSE
+    )
   }
 
   storage_path <- get_storage_path()
 
   for (server_key in active_servers) {
-
     server_url <- urls[server_key]
     server_token <- tokens[server_key]
     server_display <- toupper(server_key)
@@ -786,7 +787,6 @@ get_biologer_data <- function(verbose = TRUE) {
       columns_to_keep = TAXA_COLUMNS,
       verbose = verbose
     )
-
   }
 
   if (verbose == TRUE) {
@@ -826,7 +826,6 @@ get_biologer_data <- function(verbose = TRUE) {
 #' @import data.table
 #' @export
 open_data <- function(auto.download = TRUE, verbose = TRUE) {
-
   # Get new data from the servers
   if (auto.download == TRUE) {
     get_biologer_data(verbose = verbose)
@@ -836,7 +835,7 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
   active_servers <- intersect(names(get_biologer_token()), names(get_biologer_base_url()))
 
   if (length(active_servers) == 0) {
-    stop("No active server credentials found. Cannot determine which files to load. 
+    stop("No active server credentials found. Cannot determine which files to load.
          Please use biologer_login() to add at least one Biologer server.", call. = FALSE)
   }
 
@@ -936,23 +935,38 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
       field_df[, `dcterms:rightsHolder` := paste0("biologer.", server_key, " community")]
       field_df[, `dcterms:accessRights` :=
         fifelse(
-                license == 10, "CC BY-SA 4.0",
-                fifelse(license == 20, "CC BY-NC-SA 4.0",
-                fifelse(license == 30, "CC BY-NC-SA 4.0 (limited coordinates)",
-                fifelse(license == 35, "CC BY-SA 4.0 (closed for 3 years)",
-                fifelse(license == 40, "Closed",
-                NA_character_)))))
-      ]
+          license == 10, "CC BY-SA 4.0",
+          fifelse(
+            license == 20, "CC BY-NC-SA 4.0",
+            fifelse(
+              license == 30, "CC BY-NC-SA 4.0 (limited coordinates)",
+              fifelse(
+                license == 35, "CC BY-SA 4.0 (closed for 3 years)",
+                fifelse(
+                  license == 40, "Closed",
+                  NA_character_
+                )
+              )
+            )
+          )
+        )]
       field_df[, `dcterms:license` :=
         fifelse(
           license == 10, "https://creativecommons.org/licenses/by-sa/4.0/",
-          fifelse(license == 20, "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-          fifelse(license == 30, paste0("https://biologer.", server_key, "/licenses/partially-open-data-license"),
-          fifelse(license == 35, paste0("https://biologer.", server_key, "/licenses/temporarily-closed-data-license"),
-          fifelse(license == 40, paste0("https://biologer.", server_key, "/licenses/closed-data-license"),
-          NA_character_))))
-        )
-      ]
+          fifelse(
+            license == 20, "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+            fifelse(
+              license == 30, paste0("https://biologer.", server_key, "/licenses/partially-open-data-license"),
+              fifelse(
+                license == 35, paste0("https://biologer.", server_key, "/licenses/temporarily-closed-data-license"),
+                fifelse(
+                  license == 40, paste0("https://biologer.", server_key, "/licenses/closed-data-license"),
+                  NA_character_
+                )
+              )
+            )
+          )
+        )]
 
       if (verbose == TRUE) {
         message("  - Joining Field Observations with Taxonomy.")
@@ -1051,19 +1065,31 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
   final_dataset[, project := as.character(project)]
   final_dataset[, dynamicProperties_parts := ""]
   # Add project name
-  final_dataset[!is.na(project) & project != "",
-                dynamicProperties_parts := paste0(dynamicProperties_parts, '"project": "', project, '"')]
+  final_dataset[
+    !is.na(project) & project != "",
+    dynamicProperties_parts := paste0(dynamicProperties_parts, '"project": "', project, '"')
+  ]
   # Add the dead comment and status
-  final_dataset[found_dead == TRUE,
-                dynamicProperties_parts := paste0(dynamicProperties_parts,
-                                                  data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
-                                                  '"organismCondition": "Dead"')]
-  final_dataset[!is.na(found_dead_note) & found_dead_note != "",
-                dynamicProperties_parts := paste0(dynamicProperties_parts,
-                                                  data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
-                                                  '"mortalityNote": "', found_dead_note, '"')]
-  final_dataset[dynamicProperties_parts != "",
-                dynamicProperties := paste0("{", dynamicProperties_parts, "}")]
+  final_dataset[
+    found_dead == TRUE,
+    dynamicProperties_parts := paste0(
+      dynamicProperties_parts,
+      data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
+      '"organismCondition": "Dead"'
+    )
+  ]
+  final_dataset[
+    !is.na(found_dead_note) & found_dead_note != "",
+    dynamicProperties_parts := paste0(
+      dynamicProperties_parts,
+      data.table::fifelse(dynamicProperties_parts != "", ", ", ""),
+      '"mortalityNote": "', found_dead_note, '"'
+    )
+  ]
+  final_dataset[
+    dynamicProperties_parts != "",
+    dynamicProperties := paste0("{", dynamicProperties_parts, "}")
+  ]
   final_dataset[dynamicProperties_parts == "", dynamicProperties := NA_character_]
   # Get the atlas code for bird breeding and notes into a single column
   final_dataset[, breeding_status := atlas_code_map[as.character(atlas_code)]]
@@ -1118,30 +1144,38 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
   }
 
   # Renaming dataset to fitt into the DarwinCore
-  data.table::setnames(final_dataset,
-                       c("id", "taxon.id", "author", "rank",
-                         "name", "identifier", "latitude", "longitude",
-                         "accuracy", "location", "photos",
-                         "observer", "number", "note", "found_on",
-                         "georeferenced_by",	"georeferenced_date",
-                         "original_date", "original_locality", "original_elevation", "original_coordinates",
-                         "original_identification", "original_identification_validity", "other_original_data",
-                         "place_where_referenced_in_publication", "publication.citation"),
-                       c("occurrenceID", "taxonID", "scientificNameAuthorship", "taxonRank",
-                         "scientificName", "identifiedBy", "decimalLatitude", "decimalLongitude",
-                         "coordinateUncertaintyInMeters", "locality", "associatedMedia",
-                         "recordedBy", "individualCount", "occurrenceRemarks", "substrate",
-                         "georeferencedBy", "georeferencedDate",
-                         "verbatimEventDate", "verbatimLocality", "verbatimElevation", "verbatimCoordinates",
-                         "verbatimIdentification", "identificationVerificationStatus", "verbatimLabel",
-                         "occurrenceDetails", "bibliographicCitation"))
+  data.table::setnames(
+    final_dataset,
+    c(
+      "id", "taxon.id", "author", "rank",
+      "name", "identifier", "latitude", "longitude",
+      "accuracy", "location", "photos",
+      "observer", "number", "note", "found_on",
+      "georeferenced_by", "georeferenced_date",
+      "original_date", "original_locality", "original_elevation", "original_coordinates",
+      "original_identification", "original_identification_validity", "other_original_data",
+      "place_where_referenced_in_publication", "publication.citation"
+    ),
+    c(
+      "occurrenceID", "taxonID", "scientificNameAuthorship", "taxonRank",
+      "scientificName", "identifiedBy", "decimalLatitude", "decimalLongitude",
+      "coordinateUncertaintyInMeters", "locality", "associatedMedia",
+      "recordedBy", "individualCount", "occurrenceRemarks", "substrate",
+      "georeferencedBy", "georeferencedDate",
+      "verbatimEventDate", "verbatimLocality", "verbatimElevation", "verbatimCoordinates",
+      "verbatimIdentification", "identificationVerificationStatus", "verbatimLabel",
+      "occurrenceDetails", "bibliographicCitation"
+    )
+  )
 
   # Remove columns that we don't need
-  columns_to_drop <- c("rank_level", "uses_atlas_codes", "ancestors_names", "license", "stages", "stage_id",
-                       "elevation", "minimum_elevation", "maximum_elevation", "project", "found_dead",
-                       "found_dead_note", "dynamicProperties_parts", "taxon.name", "parent_id", "breeding_status",
-                       "collecting_start_year", "collecting_start_month", "collecting_end_year", "collecting_end_month",
-                       "eventDate_start_lit", "eventDate_end_lit", "lit_date_range")
+  columns_to_drop <- c(
+    "rank_level", "uses_atlas_codes", "ancestors_names", "license", "stages", "stage_id",
+    "elevation", "minimum_elevation", "maximum_elevation", "project", "found_dead",
+    "found_dead_note", "dynamicProperties_parts", "taxon.name", "parent_id", "breeding_status",
+    "collecting_start_year", "collecting_start_month", "collecting_end_year", "collecting_end_month",
+    "eventDate_start_lit", "eventDate_end_lit", "lit_date_range"
+  )
   final_dataset[, (columns_to_drop) := NULL]
 
   # Reorder columns
@@ -1179,7 +1213,6 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
 #' @import data.table stringi
 #' @import data.table stringi
 get_parent_taxa <- function(data_table) {
-
   DT <- data.table::copy(data_table) # Make a copy of the data_table
   DT[, RowID := .I] # Create ID
   DT[, rank := tolower(trimws(rank))] # Clean up
@@ -1215,8 +1248,10 @@ get_parent_taxa <- function(data_table) {
 
   # 3. Combine and Pivot
   # Stack ancestors and current taxon into one list.
-  combined_long <- rbind(long_ancestors_mapped[, .(RowID, TaxaName = name, rank)],
-                         long_current)
+  combined_long <- rbind(
+    long_ancestors_mapped[, .(RowID, TaxaName = name, rank)],
+    long_current
+  )
 
   # Pivot to Wide Format
   # This creates the final columns: RowID, kingdom, phylum, class, species, etc.
@@ -1255,34 +1290,46 @@ get_parent_taxa <- function(data_table) {
   # Get the specificEpithet column (2nd part of the name column for species and subspecies)
   result[, specificEpithet := NA_character_]
   target_ranks <- c("species", "subspecies")
-  result[rank %in% target_ranks,
-         specificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)]
+  result[
+    rank %in% target_ranks,
+    specificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)
+  ]
 
   # Get the infraspecificEpithet column (3nd part of the name column for subspecies)
   result[, infraspecificEpithet := NA_character_]
-  result[rank %in% "subspecies",
-         infraspecificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)]
+  result[
+    rank %in% "subspecies",
+    infraspecificEpithet := data.table::tstrsplit(name, " ", fixed = TRUE, keep = 2L)
+  ]
 
   # Get the acceptedNameUsage column from name and author
   result[, acceptedNameUsage := name]
-  result[!is.na(author) & author != "",
-         acceptedNameUsage := paste(name, author, sep = " ")]
-  result[rank == "species complex",
-         acceptedNameUsage := ""]
+  result[
+    !is.na(author) & author != "",
+    acceptedNameUsage := paste(name, author, sep = " ")
+  ]
+  result[
+    rank == "species complex",
+    acceptedNameUsage := ""
+  ]
 
   # Get the verbatimScientificName column from name and author, but ass "subsp." for plants
   result[, verbatimScientificName := name]
-  result[!is.na(author) & author != "",
-         verbatimScientificName := paste(name, author, sep = " ")]
-  result[kingdom == "Plantae" & rank == "subspecies" & !is.na(author) & author != "",
-         verbatimScientificName := paste(name, author, sep = " subsp. ")]
+  result[
+    !is.na(author) & author != "",
+    verbatimScientificName := paste(name, author, sep = " ")
+  ]
+  result[
+    kingdom == "Plantae" & rank == "subspecies" & !is.na(author) & author != "",
+    verbatimScientificName := paste(name, author, sep = " subsp. ")
+  ]
 
   result
 }
 
 #' @title Process and Convert Biologer Dates to UTC
 #' @description
-#' Cleans raw year/month/day/time columns, converts local Belgrade time 
+#' Cleans raw year/month/day/time columns, converts local Belgrade time
 #' (CET/CEST) to UTC, and formats the output into standard Darwin Core fields.
 #' Modifies the input data.table 'dt' by reference.
 #'
