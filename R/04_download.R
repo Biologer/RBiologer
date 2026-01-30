@@ -468,7 +468,7 @@ display_progress <- function(records_fetched, total_records) {
 get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep = NULL, verbose = TRUE) {
   if (is.null(filename)) {
     message("Due to its size, data should be saved into a file. Please provide CSV file for saving data.")
-    break
+    return(NULL)
   }
 
   checkpoint_path <- paste0(filename, ".checkpoint.rds")
