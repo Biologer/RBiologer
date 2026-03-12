@@ -461,13 +461,18 @@ display_progress <- function(records_fetched, total_records) {
 #' @param api_url URL of the Biologer API used to access the data.
 #' @param token JWT authorization token.
 #' @param columns_to_keep Select columns to keep in the final dataset. Server
-#' will return many columns, which are not required for R Biologer package to work.
+#' returns many columns, which are not required for RBiologer to work.
 #' @keywords internal
 #' @import data.table
 #' @export
-get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep = NULL, verbose = TRUE) {
+get_data_from_api <- function(api_url,
+                              token,
+                              filename = NULL,
+                              columns_to_keep = NULL,
+                              verbose = TRUE) {
   if (is.null(filename)) {
-    message("Due to its size, data should be saved into a file. Please provide CSV file for saving data.")
+    message("Due to its size, data should be saved into a file.
+            Please provide CSV file for saving data.")
     return(NULL)
   }
 
@@ -475,195 +480,163 @@ get_data_from_api <- function(api_url, token, filename = NULL, columns_to_keep =
   last_success_timestamp <- "0"
   records_fetched <- 0
   total_records <- NULL
+  current_page <- 1
 
+  # 1. Initialization Logic (Checkpoints)
   if (file.exists(checkpoint_path)) {
     checkpoint <- readRDS(checkpoint_path)
-    if (!is.null(checkpoint$next_url)) {
-      # Check if the last run was interrupted
-      url <- set_per_page(url = checkpoint$next_url)
+
+    if (!is.null(checkpoint$next_page) && checkpoint$next_page > 1) {
+      # Resuming an interrupted session
       records_fetched <- checkpoint$records_fetched
       total_records <- checkpoint$total_records
-      message(paste0("Resuming interrupted paginated fetch from: ", url))
-    } else {
-      # Starting an Incremental Fetch (previous run completed successfully)
       last_success_timestamp <- checkpoint$last_success_timestamp
-      url <- get_fetch_start_url(api_url, last_success_timestamp)
-      records_fetched <- 0
-      total_records <- NULL
-      if (verbose == TRUE) {
-        message(paste0("Starting incremental fetch after timestamp: ", last_success_timestamp))
+      current_page <- checkpoint$next_page
+      if (verbose) {
+        message(paste0(
+          "Resuming interrupted fetch from page: ",
+          current_page
+        ))
       }
-    }
-  } else {
-    # Initial Full Download
-    url <- get_fetch_start_url(api_url, last_success_timestamp)
-    if (verbose == TRUE) {
-      message("Starting initial full fetch from URL: ", url)
+    } else {
+      # Starting a fresh Incremental Fetch
+      last_success_timestamp <- checkpoint$last_success_timestamp
+      if (verbose) {
+        message(paste0(
+          "Starting incremental fetch after timestamp: ",
+          last_success_timestamp
+        ))
+      }
     }
   }
 
   repeat {
-    if (is.null(url)) break
+    # 2. Build the URL and fetch Data
+    url <- get_fetch_start_url(api_url, last_success_timestamp)
+    url <- paste0(url, "&page=", current_page) # append current page
 
     h <- curl::new_handle()
-    curl::handle_setheaders(h, Authorization = paste("Bearer", token), Accept = "application/json")
+    curl::handle_setheaders(h,
+      Authorization = paste("Bearer", token),
+      Accept = "application/json"
+    )
     result <- curl::curl_fetch_memory(url, handle = h)
 
-    # Handle server rate/overload conditions
     if (result$status_code %in% c(429, 503)) {
-      # Exponential backoff for 503
       wait <- ifelse(result$status_code == 429, 15, 5 + runif(1, 0, 5))
-      message(
-        "Server returned ", result$status_code, ". Waiting ",
-        round(wait, 1), " seconds before retry…"
-      )
+      message("Server busy. Waiting ", round(wait, 1), "s...")
       Sys.sleep(wait)
       next
     }
 
-    # If the server return error code
     if (result$status_code != 200) {
-      warning(paste("Failed to download page, error code:", result$status_code))
+      warning(paste(
+        "Failed to download page",
+        current_page,
+        "Error:",
+        result$status_code
+      ))
       break
     }
 
     data <- jsonlite::fromJSON(rawToChar(result$content), flatten = TRUE)
+    batch_data <- data$data
+    batch_count <- if (is.null(batch_data)) 0 else nrow(batch_data)
 
-    # Extract total record count on first page
+    # 3. Handling Total Count
     if (is.null(total_records)) {
-      total_records <- tryCatch(as.integer(data$meta$total), error = function(e) NULL)
-      if (!is.null(total_records)) {
-        if (total_records == 0) {
-          if (verbose == TRUE) {
-            message("The data is already downloaded. No need to update…")
-          }
-          break
-        } else {
-          message("Total records to download: ", format(total_records, big.mark = ","))
-        }
+      total_records <- tryCatch(as.integer(data$meta$total),
+        error = function(e) NULL
+      )
+      if (!is.null(total_records) && total_records == 0) {
+        if (verbose) message("No new data to download.")
+        break
+      }
+      if (verbose && !is.null(total_records)) {
+        message(
+          "Total records to download: ",
+          format(total_records, big.mark = ",")
+        )
       }
     }
 
-    # Add this page
-    current_count <- nrow(data$data)
-    if (is.null(current_count) || current_count == 0) {
-      message("No more new records returned by server. Finalizing...")
-      url <- NULL # This ensures the checkpoint logic below triggers the 'complete' state
-    } else {
-      records_fetched <- records_fetched + current_count
-    }
-
-    # Display progress
-    display_progress(records_fetched = records_fetched, total_records = total_records)
-
-    # 1. Save the data
-    current_page_data <- data$data # downloaded batch of data
-
-    # Define columns to keep in the final dataset
-    if (!is.null(columns_to_keep) && length(columns_to_keep) > 0) {
-      columns_to_select <- intersect(columns_to_keep, names(current_page_data))
-      current_page_data <- current_page_data[, columns_to_select]
-    }
-
-    # Some data is saved in a complex list. We need to process those before saving in
-    # simple CSV file.
-    # Process the 'types' column
-    if ("types" %in% names(current_page_data) && is.list(current_page_data$types)) {
-      current_page_data$types <- unlist(lapply(current_page_data$types, collapse_types))
-    }
-    # Process the 'photos' column
-    if ("photos" %in% names(current_page_data) && is.list(current_page_data$photos)) {
-      current_page_data$photos <- unlist(lapply(current_page_data$photos, collapse_photo_urls))
-    }
-    # Process the 'publication.authors' column
-    if ("publication.authors" %in% names(current_page_data) && is.list(current_page_data$publication.authors)) {
-      current_page_data$publication.authors <- unlist(lapply(current_page_data$publication.authors, format_authors))
-    }
-    # Process the 'translations' column
-    if ("translations" %in% names(current_page_data) && is.list(current_page_data$translations)) {
-      current_page_data$translations <- unlist(lapply(current_page_data$translations, collapse_translations))
-    }
-    # Process the 'stages' column
-    if ("stages" %in% names(current_page_data) && is.list(current_page_data$stages)) {
-      current_page_data$stages <- unlist(lapply(current_page_data$stages, collapse_stages))
-    }
-    # Process the 'synonyms' column
-    if ("synonyms" %in% names(current_page_data) && is.list(current_page_data$synonyms)) {
-      current_page_data$synonyms <- unlist(lapply(current_page_data$synonyms, collapse_synonyms))
-    }
-    # Process the 'activity' column to extract and collapse taxa changes
-    if ("activity" %in% names(current_page_data) && is.list(current_page_data$activity)) {
-      # 1. Extract the latest identification date
-      current_page_data$dateIdentified <- unlist(lapply(
-        current_page_data$activity,
-        latest_identification_date
-      ))
-
-      # 2. Extract the list of old taxon names
-      current_page_data$previousIdentifications <- unlist(lapply(
-        current_page_data$activity,
-        collapse_activity_taxa_changes
-      ))
-
-      # 3. Extract the latest modification date
-      current_page_data$modified <- unlist(lapply(
-        current_page_data$activity,
-        latest_activity_date
-      ))
-
-      # 4. Remove obsolete column
-      current_page_data$activity <- NULL
-    }
-
-    data.table::fwrite(current_page_data, file = filename, append = file.exists(filename))
-
-    # 2. Save the progress
-    url <- data$links$`next`
-    checkpoint <- list(
-      records_fetched = records_fetched,
-      total_records = total_records
-    )
-    if (!is.null(url)) {
-      checkpoint$next_url <- url
-    }
-    saveRDS(checkpoint, checkpoint_path)
-
-    # 3. Stop and save the progress after complete download
-    if (is.null(url)) {
-      message("Download complete. Finalizing…")
-      final_checkpoint <- list(
-        last_success_timestamp = as.character(as.integer(Sys.time())),
-        records_fetched = records_fetched,
-        total_records = total_records,
-        next_url = NULL
-      )
-      saveRDS(final_checkpoint, checkpoint_path)
-      message("Checkpoint saved for next incremental run.")
+    if (batch_count == 0) {
+      if (verbose) message("No more records returned. Finalizing...")
       break
     }
 
-    url <- set_per_page(url = url)
-    # Sys.sleep(0.5)
+    # 4. Save Data
+    records_fetched <- records_fetched + batch_count
+    display_progress(
+      records_fetched = records_fetched,
+      total_records = total_records
+    )
+
+    # Filter columns
+    if (!is.null(columns_to_keep) && length(columns_to_keep) > 0) {
+      columns_to_select <- intersect(columns_to_keep, names(batch_data))
+      batch_data <- batch_data[, columns_to_select]
+    }
+
+    # Process lists
+    if ("types" %in% names(batch_data) && is.list(batch_data$types)) {
+      batch_data$types <- unlist(lapply(batch_data$types, collapse_types))
+    }
+    if ("photos" %in% names(batch_data) && is.list(batch_data$photos)) {
+      batch_data$photos <- unlist(lapply(batch_data$photos, collapse_photo_urls))
+    }
+    if ("publication.authors" %in% names(batch_data) && is.list(batch_data$publication.authors)) {
+      batch_data$publication.authors <- unlist(lapply(batch_data$publication.authors, format_authors))
+    }
+    if ("translations" %in% names(batch_data) && is.list(batch_data$translations)) {
+      batch_data$translations <- unlist(lapply(batch_data$translations, collapse_translations))
+    }
+    if ("stages" %in% names(batch_data) && is.list(batch_data$stages)) {
+      batch_data$stages <- unlist(lapply(batch_data$stages, collapse_stages))
+    }
+    if ("synonyms" %in% names(batch_data) && is.list(batch_data$synonyms)) {
+      batch_data$synonyms <- unlist(lapply(batch_data$synonyms, collapse_synonyms))
+    }
+    if ("activity" %in% names(batch_data) && is.list(batch_data$activity)) {
+      batch_data$dateIdentified <- unlist(lapply(batch_data$activity, latest_identification_date))
+      batch_data$previousIdentifications <- unlist(lapply(batch_data$activity, collapse_activity_taxa_changes))
+      batch_data$modified <- unlist(lapply(batch_data$activity, latest_activity_date))
+      batch_data$activity <- NULL
+    }
+
+    data.table::fwrite(batch_data, file = filename, append = file.exists(filename))
+
+    # 5. Increment and Checkpoint
+    current_page <- current_page + 1
+
+    if (!is.null(total_records) && records_fetched >= total_records) break
+
+    saveRDS(list(
+      last_success_timestamp = last_success_timestamp,
+      records_fetched = records_fetched,
+      total_records = total_records,
+      next_page = current_page
+    ), checkpoint_path)
   }
 
-  # Remove duplicated entries (only keep the new ones)
+  # 6. Finalize Checkpoint and Duplicates
+  saveRDS(list(
+    last_success_timestamp = as.character(as.integer(Sys.time())),
+    records_fetched = 0,
+    total_records = NULL,
+    next_page = 1
+  ), checkpoint_path)
+
   if (file.exists(filename)) {
     full_data <- data.table::fread(filename, fill = TRUE)
-    is_duplicate <- duplicated(full_data$id, fromLast = TRUE)
-    final_data <- full_data[!is_duplicate, ]
+    final_data <- full_data[!duplicated(full_data$id, fromLast = TRUE), ]
     if (nrow(full_data) > nrow(final_data)) {
-      message(
-        "Removing duplicated data to keep the new online changes. ",
-        "Total rows before: ", nrow(full_data), "; after: ",
-        nrow(final_data)
-      )
+      if (verbose) message("Cleaning duplicates...")
       data.table::fwrite(final_data, file = filename)
     }
   }
 
-  if (verbose == TRUE) {
-    message("The data is saved locally in ", filename)
-  }
+  if (verbose) message("Data saved successfully.")
 }
 
 #' Fetch simple data from the API that does not require pagination and timestamps
