@@ -1398,3 +1398,104 @@ process_biologer_dates_to_utc <- function(dt) {
 
   invisible(dt)
 }
+
+#' Get Taxon Data by ID from Biologer API
+#'
+#' @param taxon_id Numeric or Character. The ID of the taxon you want to fetch.
+#' @param server Character. The name of the server (e.g., "rs", "hr", "ba", "me").
+#'        If NULL, it will try to use the first available token.
+#' @param verbose Logical. Print progress and status messages?
+#'
+#' @return A list containing the taxon data, or an error if the request fails.
+#' @export
+#'
+#' @importFrom curl new_handle handle_setheaders curl_fetch_memory
+#' @importFrom jsonlite fromJSON
+get_taxon_by_id <- function(taxon_id, server = NULL, verbose = TRUE) {
+  if (is.null(server)) {
+    all_tokens <- get_biologer_token()
+    server <- tolower(names(all_tokens)[1])
+  } else {
+    server <- tolower(server)
+  }
+
+  server_key <- tolower(server)
+  if (!server_key %in% names(BIOLOGER_URLS)) {
+    stop(paste(
+      "Server ", server, " not found in BIOLOGER_URLS."
+    ), call. = FALSE)
+  }
+  base_url <- BIOLOGER_URLS[[server_key]]
+
+  all_tokens <- get_biologer_token()
+  server_token <- all_tokens[server_key]
+
+  if (is.na(server_token) || server_token == "") {
+    stop(paste("Server token for ", server_key, " not found."), call. = FALSE)
+  }
+
+  api_url <- paste0(base_url, "/taxa/", taxon_id)
+
+  h <- curl::new_handle()
+  curl::handle_setheaders(
+    h,
+    "Authorization" = paste("Bearer", server_token),
+    "Accept" = "application/json",
+    "Content-Type" = "application/json"
+  )
+
+  success <- FALSE
+  attempt <- 1
+  max_attempts <- 5
+
+  while (!success && attempt <= max_attempts) {
+    if (verbose && attempt == 1) message("Sending request to: ", api_url)
+
+    res <- tryCatch(
+      {
+        curl::curl_fetch_memory(api_url, handle = h)
+      },
+      error = function(e) {
+        stop(paste("Error connecting to the API:", e$message), call. = FALSE)
+      }
+    )
+
+    # Case 1: Everything fine!
+    if (res$status_code == 200) {
+      success <- TRUE
+
+      # Case 2: Rate Limit (429)
+    } else if (res$status_code == 429) {
+      attempt <- attempt + 1
+
+      headers_raw <- curl::parse_headers(res$headers)
+      retry_line <- grep("retry-after", headers_raw, ignore.case = TRUE, value = TRUE)
+
+      wait_time <- 20
+      if (length(retry_line) > 0) {
+        parsed_time <- as.numeric(gsub("[^0-9]", "", retry_line))
+        if (!is.na(parsed_time)) wait_time <- parsed_time
+      }
+
+      message(paste0("⚠️ Rate limit (429) hit! Server requested to wait. Sleeping for ", wait_time, " seconds before attempt ", attempt, "..."))
+      Sys.sleep(wait_time)
+
+      # Case 3: Taxon does not exist (404)
+    } else if (res$status_code == 404) {
+      stop(paste("Taxon with ID ", taxon_id, " not found on a server ", server_key), call. = FALSE)
+
+      # Case 4: Other errors (500, 401, 403...)
+    } else {
+      stop(paste("Server returned error code:", res$status_code), call. = FALSE)
+    }
+  }
+
+  if (!success) {
+    stop("Failed to fetch data after maximum retry attempts due to rate-limiting.", call. = FALSE)
+  }
+
+  json_text <- rawToChar(res$content)
+  taxon_data <- jsonlite::fromJSON(json_text, simplifyVector = FALSE)
+
+  taxon_data
+}

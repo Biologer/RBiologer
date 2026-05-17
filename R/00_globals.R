@@ -4,7 +4,7 @@ BIOLOGER_URLS <- c(
   "hr" = "https://biologer.hr/api",
   "ba" = "https://biologer.ba/api",
   "me" = "https://biologer.me/api",
-  "dev" = "https://dev.biologer.org/api"
+  "dev" = "https://dev.biologer.rs/api"
 )
 
 FIELD_OBS_COLUMNS <- c(
@@ -37,23 +37,25 @@ TAXA_COLUMNS <- c(
   "translations", "stages", "synonyms"
 )
 
-DWC_COLUMN_ORDER <- c("occurrenceID", "taxonID", "kingdom", "subkingdom", "infrakingdom", "phylum",
-                      "subphylum", "class", "subclass", "order", "suborder", "infraorder",
-                      "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
-                      "specificEpithet", "scientificNameAuthorship", "infraspecificEpithet",
-                      "scientificName", "acceptedNameUsage", "previousIdentifications", "taxonRank",
-                      "vernacularName", "verbatimScientificName", "taxonomicStatus", "identifiedBy", "dateIdentified",
-                      "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
-                      "dcterms:accessRights", "dcterms:license", "recordedBy",
-                      "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters",
-                      "locality", "georeferencedBy", "georeferencedDate",
-                      "minimumElevationInMeters", "maximumElevationInMeters",
-                      "eventTime", "eventDate", "day", "month", "year", "modified",
-                      "lifeStage", "sex", "individualCount",
-                      "associatedMedia", "habitat", "substrate", "occurrenceRemarks", "dynamicProperties",
-                      "occurrenceDetails", "verbatimEventDate", "verbatimLocality", "verbatimElevation",
-                      "verbatimCoordinates", "verbatimIdentification", "identificationVerificationStatus",
-                      "verbatimLabel", "bibliographicCitation")
+DWC_COLUMN_ORDER <- c(
+  "occurrenceID", "taxonID", "kingdom", "subkingdom", "infrakingdom", "phylum",
+  "subphylum", "class", "subclass", "order", "suborder", "infraorder",
+  "superfamily", "family", "subfamily", "tribe", "subtribe", "genus",
+  "specificEpithet", "scientificNameAuthorship", "infraspecificEpithet",
+  "scientificName", "acceptedNameUsage", "previousIdentifications", "taxonRank",
+  "vernacularName", "verbatimScientificName", "taxonomicStatus", "identifiedBy", "dateIdentified",
+  "basisOfRecord", "dcterms:type", "typeOfRecord", "dcterms:rightsHolder",
+  "dcterms:accessRights", "dcterms:license", "recordedBy",
+  "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters",
+  "locality", "georeferencedBy", "georeferencedDate",
+  "minimumElevationInMeters", "maximumElevationInMeters",
+  "eventTime", "eventDate", "day", "month", "year", "modified",
+  "lifeStage", "sex", "individualCount",
+  "associatedMedia", "habitat", "substrate", "occurrenceRemarks", "dynamicProperties",
+  "occurrenceDetails", "verbatimEventDate", "verbatimLocality", "verbatimElevation",
+  "verbatimCoordinates", "verbatimIdentification", "identificationVerificationStatus",
+  "verbatimLabel", "bibliographicCitation"
+)
 
 atlas_code_map <- c(
   "0"  = "Observed but suspected to be still on migration or to be summering non-breeder (Possible Breeding)",
