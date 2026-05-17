@@ -18,6 +18,8 @@ Depends:
   jsonlite,
   curl
 Imports:
-  sf
+  sf,
+  terra,
+  giscoR
 Suggests:
 
