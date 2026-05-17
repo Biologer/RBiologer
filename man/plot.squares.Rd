@@ -4,7 +4,7 @@
 \alias{plot.squares}
 \title{Plot Observations Within EEA Grid Square(s)}
 \usage{
-\method{plot}{squares}(
+plot.squares(
   fill = "taxon.name",
   shape = NULL,
   grid_type = c("1km", "10km"),

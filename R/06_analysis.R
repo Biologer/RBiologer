@@ -13,7 +13,7 @@
 #' @import sf
 #' @import terra
 #' @import giscoR
-polygon_summary <- function(
+species_within_polygon <- function(
   polygon = NULL,
   country = "all",
   area_buffer = 0,
@@ -355,7 +355,7 @@ get_protected_species <- function(data = NULL) {
 #' @return A character vector of unique formatted references (alphabetically sorted).
 #' @export
 #'
-#' @importFrom data.table as.data.table unique
+#' @import data.table
 get_references <- function(dt) {
   refs_dt <- data.table::as.data.table(dt)[, .(publication.authors, publication.year)]
 

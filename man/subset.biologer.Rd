@@ -4,7 +4,7 @@
 \alias{subset.biologer}
 \title{Subset Biologer Data}
 \usage{
-\method{subset}{biologer}(df = NULL, ...)
+subset.biologer(df = NULL, ...)
 }
 \arguments{
 \item{df}{A dataframe to subset. Defaults to the result of \code{open.data()} if NULL.}

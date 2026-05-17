@@ -4,7 +4,7 @@
 \alias{plot.zupanija}
 \title{Plot Zupanije JSON}
 \usage{
-\method{plot}{zupanija}()
+plot.zupanija()
 }
 \value{
 A ggplot object showing the Zupanije map.

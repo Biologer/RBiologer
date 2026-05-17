@@ -4,7 +4,7 @@
 \alias{plot.zupanije}
 \title{Plot Biologer Observations for Specific Zupanije}
 \usage{
-\method{plot}{zupanije}(
+plot.zupanije(
   fill = "taxon.name",
   shape = NULL,
   zupanija,

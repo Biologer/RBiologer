@@ -21,7 +21,7 @@ get_data_from_api(
 (e.g., "observations.csv").}
 
 \item{columns_to_keep}{Select columns to keep in the final dataset. Server
-will return many columns, which are not required for R Biologer package to work.}
+returns many columns, which are not required for RBiologer to work.}
 }
 \description{
 Resumes the download from the last successfully fetched record's timestamp.

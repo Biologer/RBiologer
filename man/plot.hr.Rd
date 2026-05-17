@@ -4,7 +4,7 @@
 \alias{plot.hr}
 \title{Plot RH_2018 Shapefile}
 \usage{
-\method{plot}{hr}()
+plot.hr()
 }
 \value{
 A ggplot object showing the RH_2018 map.

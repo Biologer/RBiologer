@@ -4,7 +4,7 @@
 \alias{plot.biologer}
 \title{Plot Biologer Observations on a Map}
 \usage{
-\method{plot}{biologer}(
+plot.biologer(
   fill = "taxon.name",
   shape = NULL,
   layer = "rh",

@@ -4,7 +4,7 @@
 \alias{plot.polygon}
 \title{Plot Observations Within a Polygon}
 \usage{
-\method{plot}{polygon}(
+plot.polygon(
   fill = "taxon.name",
   shape = NULL,
   polygon_coords,
