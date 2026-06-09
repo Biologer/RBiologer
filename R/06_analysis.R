@@ -1,7 +1,6 @@
 #' Summary of Data within a Polygon
 #'
 #' @param polygon An sf or terra spatial object defining the area of interest.
-#' @param country_polygon An sf or terra spatial object defining the country boundary.
 #' @param area_buffer Numeric. Buffer distance in meters (default 50).
 #' @param region_buffer Numeric. Buffer distance in meters (default 50,000).
 #' @param auto.download Logical. Automatically download new data?
@@ -165,10 +164,20 @@ species_within_polygon <- function(
     )
   }
 
-  output.table <- do.call(rbind, output.list)
-  output.table <- as.data.frame(output.table)
+  output_table <- do.call(rbind, output.list)
+  output_table <- as.data.frame(output_table)
+  output_table <- output_table[order(
+    output_table[, 1],
+    output_table[, 2],
+    output_table[, 3],
+    output_table[, 4]
+  ), ]
 
-  output.table
+  list(
+    summary = output_table,
+    data_area = as.data.frame(data_area),
+    data_region = as.data.frame(data_region)
+  )
 }
 
 #' Get High-Precision Country Borders
