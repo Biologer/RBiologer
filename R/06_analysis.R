@@ -271,6 +271,7 @@ get_local_name <- function(name_string, locale = "en") {
   }
 }
 
+#' @export
 get_red_list <- function(data = NULL, level = "Europe") {
   if (is.null(data) || length(data) == 0) {
     return(NA_character_)
@@ -285,6 +286,7 @@ get_red_list <- function(data = NULL, level = "Europe") {
   return(NA_character_)
 }
 
+#' @export
 get_bern_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
     return(NA_character_)
@@ -311,6 +313,7 @@ get_bern_directive <- function(data = NULL) {
   }
 }
 
+#' @export
 get_habitats_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
     return(NA_character_)
@@ -335,6 +338,7 @@ get_habitats_directive <- function(data = NULL) {
   }
 }
 
+#' @export
 get_protected_species <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
     return(NA_character_)
@@ -364,7 +368,7 @@ get_protected_species <- function(data = NULL) {
 #' @return A character vector of unique formatted references (alphabetically sorted).
 #' @export
 #'
-#' @import data.table
+#' @importFrom data.table as.data.table
 get_references <- function(dt) {
   refs_dt <- data.table::as.data.table(dt)[, .(publication.authors, publication.year)]
 
@@ -374,6 +378,7 @@ get_references <- function(dt) {
     return(NA_character_)
   }
 
+  #' @export
   # Format authors (et al. role)
   format_authors <- function(author_string) {
     authors_vector <- unlist(strsplit(author_string, split = ";|\\band\\b"))
@@ -405,6 +410,7 @@ get_references <- function(dt) {
   return(paste(sort(unique(refs_dt$formatted_ref)), collapse = ", "))
 }
 
+#' @export
 get_type_of_record <- function(citation_vector = NULL) {
   if (is.null(citation_vector) || length(citation_vector) == 0) {
     return(NA_character_)

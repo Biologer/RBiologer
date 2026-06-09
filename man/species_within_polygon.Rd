@@ -23,8 +23,6 @@ species_within_polygon(
 \item{auto.download}{Logical. Automatically download new data?}
 
 \item{verbose}{Logical. Print progress messages?}
-
-\item{country_polygon}{An sf or terra spatial object defining the country boundary.}
 }
 \value{
 A summary data frame/table.
