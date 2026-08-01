@@ -121,6 +121,9 @@ species_within_polygon <- function(
       LocalName = get_local_name(taxon$translations, country),
       BernConvention = get_bern_directive(taxon_online$conservation_legislations),
       HabitatDirective = get_habitats_directive(taxon_online$conservation_legislations),
+      BirdsDirective = get_birds_directive(taxon_online$conservation_legislations),
+      CMSConvention = get_cms_convention(taxon_online$conservation_legislations),
+      CITESConvention = get_cites_convention(taxon_online$conservation_legislations),
       NationalLeg = get_protected_species(taxon_online$conservation_legislations),
       RedList = get_red_list(level = "Global", taxon_online$red_lists),
       RedListEu = get_red_list(level = "Europe", taxon_online$red_lists),
@@ -173,17 +176,10 @@ species_within_polygon <- function(
     output_table[, 4]
   ), ]
 
-  df_area <- as.data.frame(data_area, geom = "XY")
-  names(df_area)[names(df_area) == "x"] <- "decimalLongitude"
-  names(df_area)[names(df_area) == "y"] <- "decimalLatitude"
-  df_region <- as.data.frame(data_region, geom = "XY")
-  names(df_region)[names(df_region) == "x"] <- "decimalLongitude"
-  names(df_region)[names(df_region) == "y"] <- "decimalLatitude"
-
   list(
     summary = output_table,
-    data_area = df_area,
-    data_region = df_region
+    data_area = as.data.frame(data_area),
+    data_region = as.data.frame(data_region)
   )
 }
 
@@ -335,6 +331,76 @@ get_habitats_directive <- function(data = NULL) {
       matched_annexes <- c(matched_annexes, "Annex 4")
     } else if (data[[n]]$name == "Habitat, Annex 5") {
       matched_annexes <- c(matched_annexes, "Annex 5")
+    }
+  }
+
+  if (length(matched_annexes) == 0) {
+    return(NA_character_)
+  } else {
+    return(paste(matched_annexes, collapse = ", "))
+  }
+}
+
+#' @export
+get_cites_convention <- function(data = NULL) {
+  if (is.null(data) || length(data) == 0) {
+    return(NA_character_)
+  }
+
+  matched_annexes <- character(0)
+
+  for (n in seq_along(data)) {
+    leg_name <- data[[n]]$name
+    if (!is.null(leg_name) && grepl("^CITES", leg_name, ignore.case = TRUE)) {
+      annex_part <- sub("^.*?,\\s*", "", leg_name)
+      matched_annexes <- c(matched_annexes, annex_part)
+    }
+  }
+
+  if (length(matched_annexes) == 0) {
+    return(NA_character_)
+  } else {
+    return(paste(matched_annexes, collapse = ", "))
+  }
+}
+
+#' @export
+get_cms_convention <- function(data = NULL) {
+  if (is.null(data) || length(data) == 0) {
+    return(NA_character_)
+  }
+
+  matched_annexes <- character(0)
+
+  for (n in seq_along(data)) {
+    leg_name <- data[[n]]$name
+    if (!is.null(leg_name) && grepl("^CMS", leg_name, ignore.case = TRUE)) {
+      annex_part <- sub("^.*?,\\s*", "", leg_name)
+      matched_annexes <- c(matched_annexes, annex_part)
+    }
+  }
+
+  if (length(matched_annexes) == 0) {
+    return(NA_character_)
+  } else {
+    return(paste(matched_annexes, collapse = ", "))
+  }
+}
+
+#' @export
+get_birds_directive <- function(data = NULL) {
+  if (is.null(data) || length(data) == 0) {
+    return(NA_character_)
+  }
+
+  matched_annexes <- character(0)
+
+  for (n in seq_along(data)) {
+    leg_name <- data[[n]]$name
+    if (!is.null(leg_name) && grepl("^Birds Directive", leg_name, ignore.case = TRUE)) {
+      # Izvlači sve posle zareza ili uzima ceo naziv ako nema podela
+      annex_part <- sub("^.*?,\\s*", "", leg_name)
+      matched_annexes <- c(matched_annexes, annex_part)
     }
   }
 
