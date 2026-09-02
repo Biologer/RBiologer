@@ -176,10 +176,17 @@ species_within_polygon <- function(
     output_table[, 4]
   ), ]
 
+  df_area <- as.data.frame(data_area, geom = "XY")
+  names(df_area)[names(df_area) == "x"] <- "decimalLongitude"
+  names(df_area)[names(df_area) == "y"] <- "decimalLatitude"
+  df_region <- as.data.frame(data_region, geom = "XY")
+  names(df_region)[names(df_region) == "x"] <- "decimalLongitude"
+  names(df_region)[names(df_region) == "y"] <- "decimalLatitude"
+
   list(
     summary = output_table,
-    data_area = as.data.frame(data_area),
-    data_region = as.data.frame(data_region)
+    data_area = df_area,
+    data_region = df_region
   )
 }
 
