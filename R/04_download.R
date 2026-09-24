@@ -1465,19 +1465,28 @@ get_taxon_by_id <- function(taxon_id, server = NULL, verbose = TRUE) {
       success <- TRUE
 
       # Case 2: Rate Limit (429)
-    } else if (res$status_code == 429) {
+    } else if (res$status_code == c(429, 508)) {
       attempt <- attempt + 1
 
       headers_raw <- curl::parse_headers(res$headers)
       retry_line <- grep("retry-after", headers_raw, ignore.case = TRUE, value = TRUE)
 
-      wait_time <- 20
+      wait_time <- 60
       if (length(retry_line) > 0) {
         parsed_time <- as.numeric(gsub("[^0-9]", "", retry_line))
         if (!is.na(parsed_time)) wait_time <- parsed_time
       }
 
-      message(paste0("⚠️ Rate limit (429) hit! Server requested to wait. Sleeping for ", wait_time, " seconds before attempt ", attempt, "..."))
+      message(
+        paste0(
+          "⚠️ Server limit or loop detected (Status ",
+          res$status_code,
+          "). Sleeping for ",
+          wait_time,
+          " seconds before attempt ",
+          attempt, "..."
+        )
+      )
       Sys.sleep(wait_time)
 
       # Case 3: Taxon does not exist (404)
