@@ -1465,7 +1465,7 @@ get_taxon_by_id <- function(taxon_id, server = NULL, verbose = TRUE) {
       success <- TRUE
 
       # Case 2: Rate Limit (429)
-    } else if (res$status_code == c(429, 508)) {
+    } else if (res$status_code %in% c(429, 508)) {
       attempt <- attempt + 1
 
       headers_raw <- curl::parse_headers(res$headers)
