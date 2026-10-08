@@ -20,6 +20,7 @@ Depends:
 Imports:
   sf,
   terra,
-  giscoR
+  giscoR,
+  rgbif
 Suggests:
 
