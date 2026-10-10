@@ -3,9 +3,10 @@
 #' @param polygon An sf or terra spatial object defining the area of interest.
 #' @param kingdom Return only the data from given kingdom.
 #' @param phylum Return only the data from given phylum
+#' @param class Return only the data from given class
 #' @param order Return only the data from given order
 #' @param area_buffer Numeric. Buffer distance in meters (default 50).
-#' @param region_buffer Numeric. Buffer distance in meters (default 50,000).
+#' @param region_buffer Numeric. Buffer distance in meters (default 10,000).
 #' @param auto.download Logical. Automatically download new data?
 #' @param verbose Logical. Print progress messages?
 #'
@@ -24,7 +25,7 @@ species_within_polygon <- function(
   order = NULL,
   country = "all",
   area_buffer = 0,
-  region_buffer = 50000,
+  region_buffer = 10000,
   auto.download = TRUE,
   verbose = TRUE,
   get_gbif = FALSE
@@ -37,6 +38,7 @@ species_within_polygon <- function(
   biologer_data <- open_data(auto.download, verbose)
   biologer_data <- biologer_data[is.na(biologer_data$status) | biologer_data$status == "approved", ]
   biologer_data <- biologer_data[!is.na(biologer_data$taxonID), ]
+  biologer_data <- as.data.frame(biologer_data)
 
   # Load study area and create buffers
   study_area <- terra::vect(polygon)
@@ -47,191 +49,177 @@ species_within_polygon <- function(
   study_region <- terra::aggregate(terra::project(region_buf_laea, "EPSG:4326"))
   rm(study_area_laea, area_buf_laea, region_buf_laea)
 
-  # Get the GBIF dataset
+  # Load taxonomic data from local cache used for queries and naming GBIF dataset
+  taxa_file <- file.path(get_storage_path(), paste0("biologer_taxa_", country, ".csv"))
+  taxa_df <- NULL
+  if (file.exists(taxa_file)) {
+    taxa_df <- data.table::fread(taxa_file, stringsAsFactors = FALSE, fill = TRUE)
+    if ("id" %in% names(taxa_df)) taxa_df$id <- as.character(taxa_df$id)
+  } else {
+    if (verbose) message(sprintf("⚠️ Local taxa cache not found at: %s", taxa_file))
+  }
+
+  # Get the GBIF dataset and merge it to the Biologer dataset
   if (get_gbif) {
-    if (verbose) message("Fetching GBIF occurrence data for the study region...")
+    if (verbose) message("Preparing spatial tiles for GBIF batch download...")
 
-    # 1. Convert study_region SpatVector to sf for WKT formatting
-    region_sf <- sf::st_as_sf(study_region)
-    region_sf_clean <- sf::st_make_valid(region_sf)
-    region_sf_simp <- sf::st_simplify(region_sf_clean, dTolerance = 50)
-    wkt_region <- sf::st_as_text(sf::st_geometry(region_sf_simp))
+    region_laea <- terra::project(study_region, "EPSG:3035")
+    tile_raster <- terra::rast(region_laea, res = 5000)
+    tiles_poly <- terra::as.polygons(tile_raster, values = FALSE)
+    tiles_intersect <- terra::intersect(tiles_poly, region_laea)
+    tiles_wgs84 <- terra::project(tiles_intersect, "EPSG:4326")
+    total_tiles <- terra::nrow(tiles_wgs84)
 
-    # 2. Fetch data from GBIF using rgbif
-    gbif_res <- NULL
+    if (verbose) message(sprintf("Study region split into %d tiles for GBIF querying.", total_tiles))
+
+    gbif_list <- list()
     max_attempts <- 3
-    for (attempt in 1:max_attempts) {
-      gbif_res <- tryCatch(
-        {
-          rgbif::occ_search(
-            geometry = wkt_region,
-            hasCoordinate = TRUE,
-            limit = 100000,
-            geom_big = "bbox"
-          )
-        },
-        error = function(e) {
-          message(sprintf("⚠️ GBIF fetch failed on attempt %d (%s). Retrying...", attempt, e$message))
-          NULL
-        }
-      )
+    for (t_idx in seq_len(total_tiles)) {
+      single_tile <- tiles_wgs84[t_idx, ]
 
-      if (!is.null(gbif_res)) break
-      Sys.sleep(5)
+      # Convert tile SpatVector to sf for WKT formatting
+      tile_sf <- sf::st_as_sf(single_tile)
+      wkt_tile <- sf::st_as_text(sf::st_geometry(tile_sf))
+
+      if (verbose) message(sprintf("Fetching GBIF tile %d of %d...", t_idx, total_tiles))
+
+      tile_res <- NULL
+      for (attempt in 1:max_attempts) {
+        tile_res <- tryCatch(
+          {
+            rgbif::occ_search(
+              geometry = wkt_tile,
+              hasCoordinate = TRUE,
+              limit = 100000,
+              geom_big = "bbox"
+            )
+          },
+          error = function(e) {
+            NULL
+          }
+        )
+
+        if (!is.null(tile_res)) break
+        Sys.sleep(5)
+      }
+
+      # Check if data exists and is a non-empty data frame
+      if (!is.null(tile_res$data) && is.data.frame(tile_res$data) && nrow(tile_res$data) > 0) {
+        tile_df <- as.data.frame(tile_res$data)
+
+        # Clean the data. List to vector for later merging...
+        list_cols <- sapply(tile_df, is.list)
+        if (any(list_cols)) {
+          tile_df[list_cols] <- lapply(tile_df[list_cols], function(col) {
+            sapply(
+              col,
+              function(x) if (is.null(x) || length(x) == 0) NA_character_ else paste(as.character(x), collapse = "; ")
+            )
+          })
+        }
+
+        gbif_list[[length(gbif_list) + 1]] <- tile_df
+      }
+      Sys.sleep(1)
     }
 
-    if (!is.null(gbif_res$data) && nrow(gbif_res$data) > 0) {
-      gbif_raw <- gbif_res$data
+    if (length(gbif_list) > 0) {
+      gbif_raw <- as.data.frame(data.table::rbindlist(gbif_list, fill = TRUE, use.names = TRUE))
 
-      # Explicitly map GBIF columns to match Biologer structure
-      gbif_df <- data.frame(
-        occurrenceID = if ("occurrenceID" %in% names(gbif_raw)) as.character(gbif_raw$occurrenceID) else as.character(gbif_raw$key),
-        taxonID = NA_character_,
-        kingdom = if ("kingdom" %in% names(gbif_raw)) gbif_raw$kingdom else NA_character_,
-        subkingdom = NA_character_,
-        infrakingdom = NA_character_,
-        phylum = if ("phylum" %in% names(gbif_raw)) gbif_raw$phylum else NA_character_,
-        subphylum = NA_character_,
-        class = if ("class" %in% names(gbif_raw)) gbif_raw$class else NA_character_,
-        subclass = NA_character_,
-        order = if ("order" %in% names(gbif_raw)) gbif_raw$order else NA_character_,
-        suborder = NA_character_,
-        infraorder = NA_character_,
-        superfamily = NA_character_,
-        family = if ("family" %in% names(gbif_raw)) gbif_raw$family else NA_character_,
-        subfamily = NA_character_,
-        tribe = NA_character_,
-        subtribe = NA_character_,
-        genus = if ("genus" %in% names(gbif_raw)) gbif_raw$genus else NA_character_,
-        specificEpithet = if ("specificEpithet" %in% names(gbif_raw)) gbif_raw$specificEpithet else NA_character_,
-        scientificNameAuthorship = if ("scientificNameAuthorship" %in% names(gbif_raw)) as.character(gbif_raw$scientificNameAuthorship) else NA_character_,
-        infraspecificEpithet = if ("infraspecificEpithet" %in% names(gbif_raw)) as.character(gbif_raw$infraspecificEpithet) else NA_character_,
-        scientificName = if ("species" %in% names(gbif_raw)) gbif_raw$species else gbif_raw$scientificName,
-        acceptedNameUsage = if ("acceptedScientificName" %in% names(gbif_raw)) gbif_raw$acceptedScientificName else NA_character_,
-        previousIdentifications = NA_character_,
-        taxonRank = if ("taxonRank" %in% names(gbif_raw)) gbif_raw$taxonRank else NA_character_,
-        vernacularName = NA_character_,
-        verbatimScientificName = NA_character_,
-        taxonomicStatus = if ("taxonomicStatus" %in% names(gbif_raw)) gbif_raw$taxonomicStatus else NA_character_,
-        identifiedBy = {
-          id_val <- if ("identifiedBy" %in% names(gbif_raw)) as.character(gbif_raw$identifiedBy) else rep(NA_character_, nrow(gbif_raw))
-          id_ids_val <- if ("identifiedByIDs" %in% names(gbif_raw)) as.character(gbif_raw$identifiedByIDs) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(id_val) & id_val != "", id_val,
-            ifelse(!is.na(id_ids_val) & id_ids_val != "", id_ids_val, NA_character_)
-          )
-        },
-        dateIdentified = NA_character_,
-        basisOfRecord = if ("basisOfRecord" %in% names(gbif_raw)) gbif_raw$basisOfRecord else NA_character_,
-        `dcterms:type` = NA_character_,
-        typeOfRecord = {
-          bor <- if ("basisOfRecord" %in% names(gbif_raw)) as.character(gbif_raw$basisOfRecord) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(bor) & bor != "", bor, "HumanObservation")
-        },
-        `dcterms:rightsHolder` = {
-          pub <- if ("publishingOrgKey" %in% names(gbif_raw)) as.character(gbif_raw$publishingOrgKey) else rep(NA_character_, nrow(gbif_raw))
-          pub_country <- if ("publishingCountry" %in% names(gbif_raw)) as.character(gbif_raw$publishingCountry) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(pub) & pub != "", pub,
-            ifelse(!is.na(pub_country) & pub_country != "", pub_country, NA_character_)
-          )
-        },
-        `dcterms:accessRights` = {
-          lic <- if ("license" %in% names(gbif_raw)) as.character(gbif_raw$license) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(lic) & lic != "", lic, NA_character_)
-        },
-        `dcterms:license` = if ("license" %in% names(gbif_raw)) gbif_raw$license else NA_character_,
-        recordedBy = {
-          rec_val <- if ("recordedBy" %in% names(gbif_raw)) as.character(gbif_raw$recordedBy) else rep(NA_character_, nrow(gbif_raw))
-          rec_ids_val <- if ("recordedByIDs" %in% names(gbif_raw)) as.character(gbif_raw$recordedByIDs) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(rec_val) & rec_val != "", rec_val,
-            ifelse(!is.na(rec_ids_val) & rec_ids_val != "", rec_ids_val, NA_character_)
-          )
-        },
-        decimalLatitude = gbif_raw$decimalLatitude,
-        decimalLongitude = gbif_raw$decimalLongitude,
-        coordinateUncertaintyInMeters = if ("coordinateUncertaintyInMeters" %in% names(gbif_raw)) gbif_raw$coordinateUncertaintyInMeters else NA_real_,
-        locality = NA_character_,
-        georeferencedBy = NA_character_,
-        georeferencedDate = NA_character_,
-        minimumElevationInMeters = NA_real_,
-        maximumElevationInMeters = NA_real_,
-        eventTime = NA_character_,
-        eventDate = if ("eventDate" %in% names(gbif_raw)) gbif_raw$eventDate else NA_character_,
-        day = if ("day" %in% names(gbif_raw)) gbif_raw$day else NA_integer_,
-        month = if ("month" %in% names(gbif_raw)) gbif_raw$month else NA_integer_,
-        year = if ("year" %in% names(gbif_raw)) gbif_raw$year else NA_integer_,
-        modified = NA_character_,
-        lifeStage = {
-          ls_val <- if ("lifeStage" %in% names(gbif_raw)) as.character(gbif_raw$lifeStage) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(ls_val) & ls_val != "", ls_val, NA_character_)
-        },
-        sex = {
-          sex_val <- if ("sex" %in% names(gbif_raw)) as.character(gbif_raw$sex) else rep(NA_character_, nrow(gbif_raw))
-          ifelse(!is.na(sex_val) & sex_val != "", sex_val, NA_character_)
-        },
-        individualCount = if ("individualCount" %in% names(gbif_raw)) gbif_raw$individualCount else NA_integer_,
-        associatedMedia = NA_character_,
-        habitat = NA_character_,
-        substrate = NA_character_,
-        occurrenceRemarks = NA_character_,
-        dynamicProperties = NA_character_,
-        occurrenceDetails = NA_character_,
-        verbatimEventDate = NA_character_,
-        verbatimLocality = NA_character_,
-        verbatimElevation = NA_character_,
-        verbatimCoordinates = NA_character_,
-        verbatimIdentification = NA_character_,
-        identificationVerificationStatus = NA_character_,
-        verbatimLabel = NA_character_,
-        bibliographicCitation = NA_character_,
-        mgrs10k = NA_character_,
-        status = "approved",
-        types = NA_character_,
-        dataset = if ("datasetName" %in% names(gbif_raw)) gbif_raw$datasetName else "GBIF",
-        atlas_code = NA_character_,
-        timed_count_id = NA_character_,
-        observed_by.id = NA_character_,
-        identified_by.id = NA_character_,
-        restricted = FALSE,
-        allochthonous = FALSE,
-        invasive = FALSE,
-        translations = NA,
-        synonyms = NA,
-        is_original_data = FALSE,
-        cited_publication_id = NA_integer_,
-        publication.id = NA_integer_,
-        publication.year = NA_integer_,
-        publication.authors = NA_character_,
-        stringsAsFactors = FALSE
-      )
+      # Remove exact duplicates if any overlap occurred
+      if ("key" %in% names(gbif_raw)) {
+        gbif_raw <- gbif_raw[!duplicated(gbif_raw$key), ]
+      } else {
+        gbif_raw <- unique(gbif_raw)
+      }
+
+      if (verbose) message(sprintf("Successfully fetched %d total records from GBIF across all tiles.", nrow(gbif_raw)))
+
+      # Map GBIF columns to match Biologer structure
+      gbif_df <- map_gbif_to_biologer(gbif_raw)
+
+      # Harmonize GBIF taxonomy with Biologer's master taxa list
+      # 1. Fill the verbatimScientificName with current GBIF species name
+      if ("acceptedNameUsage" %in% names(gbif_df)) {
+        gbif_df$verbatimScientificName <- ifelse(
+          is.na(gbif_df$verbatimScientificName) | gbif_df$verbatimScientificName == "",
+          gbif_df$acceptedNameUsage,
+          gbif_df$verbatimScientificName
+        )
+      }
+      # 2. Replace GBIF scientificName with Biologer scientificName
+      manual_match <- match(gbif_df$scientificName, gbif_to_biologer_species_names$gbif_name)
+      manual_rows <- !is.na(manual_match)
+      if (any(manual_rows)) {
+        gbif_df$scientificName[manual_rows] <- gbif_to_biologer_species_names$biologer_name[manual_match[manual_rows]]
+        if (verbose) message(sprintf("Biologer taxonomy applied to %d GBIF records.", sum(manual_rows)))
+      }
+      # 3. Get the author name from the Biologer taxonomic table
+      match_idx <- match(gbif_df$scientificName, taxa_df$name)
+      matched_rows <- !is.na(match_idx)
+      if (any(matched_rows)) {
+        if ("author" %in% names(taxa_df) && "scientificNameAuthorship" %in% names(gbif_df)) {
+          gbif_df$scientificNameAuthorship[matched_rows] <- taxa_df$author[match_idx[matched_rows]]
+        }
+        if ("taxonID" %in% names(gbif_df) && "id" %in% names(taxa_df)) {
+          gbif_df$taxonID[matched_rows] <- as.character(taxa_df$id[match_idx[matched_rows]])
+        }
+      }
+
+      # 4. Fill acceptedNameUsage as "scientificName + scientificNameAuthorship"
+      if ("acceptedNameUsage" %in% names(gbif_df) &&
+        "scientificName" %in% names(gbif_df) &&
+        "scientificNameAuthorship" %in% names(gbif_df)) {
+        gbif_df$acceptedNameUsage <- ifelse(
+          !is.na(gbif_df$scientificName) &
+            !is.na(gbif_df$scientificNameAuthorship) &
+            gbif_df$scientificNameAuthorship != "",
+          paste(gbif_df$scientificName, " ", gbif_df$scientificNameAuthorship),
+          gbif_df$scientificName
+        )
+      }
+
+      # 5. Split genus and specificEpithet for species-rank records
+      if ("taxonRank" %in% names(gbif_df) && "scientificName" %in% names(gbif_df)) {
+        species_mask <- !is.na(gbif_df$taxonRank) &
+          tolower(gbif_df$taxonRank) == "species" &
+          !is.na(gbif_df$scientificName)
+        if (any(species_mask)) {
+          name_parts <- strsplit(gbif_df$scientificName[species_mask], "\\s+")
+          gbif_df$genus[species_mask] <-
+            sapply(name_parts, function(x) if (length(x) >= 1) x[1] else NA_character_)
+          gbif_df$specificEpithet[species_mask] <-
+            sapply(name_parts, function(x) if (length(x) >= 2) x[2] else NA_character_)
+        }
+      }
 
       # Drop rows without valid species or coordinates
-      gbif_df <- gbif_df[!is.na(gbif_df$scientificName) &
-        !is.na(gbif_df$decimalLatitude) &
-        !is.na(gbif_df$decimalLongitude), ]
+      gbif_df <- gbif_df[
+        !is.na(gbif_df$scientificName) &
+          !is.na(gbif_df$decimalLatitude) &
+          !is.na(gbif_df$decimalLongitude),
+      ]
 
-      # Ensure both are data.frames to avoid data.table scoping errors on rbind
-      biologer_data <- as.data.frame(biologer_data)
-
-      # Keep only columns present in biologer_data to ensure a clean bind
       common_cols <- intersect(names(biologer_data), names(gbif_df))
-
       biologer_data <- rbind(
         biologer_data[, common_cols, drop = FALSE],
-        gbif_df[, common_cols, drop = FALSE]
+        gbif_df[, common_cols, drop = TRUE]
       )
     }
   }
 
+  # Subset the dataset to the given higher taxa
   if (!is.null(order)) {
     biologer_data <- biologer_data[!is.na(biologer_data$order) & biologer_data$order == order, ]
   } else if (!is.null(class)) {
-    biologer_data <- biologer_data[!is.na(biologer_data$class) & biologer_data$phylum == class, ]
+    biologer_data <- biologer_data[!is.na(biologer_data$class) & biologer_data$class == class, ]
   } else if (!is.null(phylum)) {
     biologer_data <- biologer_data[!is.na(biologer_data$phylum) & biologer_data$phylum == phylum, ]
   } else if (!is.null(kingdom)) {
     biologer_data <- biologer_data[!is.na(biologer_data$kingdom) & biologer_data$kingdom == kingdom, ]
   }
 
+  # Convert data.frame to spatial data
   biologer_vect <- terra::vect(
     biologer_data,
     geom = c("decimalLongitude", "decimalLatitude"),
@@ -285,11 +273,10 @@ species_within_polygon <- function(
   ]
 
   output.list <- list()
+  # Rund the query for get the taxon data by taxon ID
   for (i in seq_along(area_species)) {
     species <- area_species[i]
-    print(paste0(
-      "Adding species ", species, "; ", i, " of ", length(area_species)
-    ))
+    if (verbose) print(paste0("Adding species ", species, "; ", i, " of ", length(area_species)))
 
     # Get the national coverage of the 1×1 km grids
     national_grids <- as.numeric(as.character(
@@ -306,39 +293,46 @@ species_within_polygon <- function(
 
     taxon <- biologer_dt[biologer_dt$scientificName == species][1]
     taxon_online <- NULL
+    raw_id <- taxon$taxonID
+    if (is.list(raw_id)) raw_id <- unlist(raw_id)
+    if (length(raw_id) == 0) raw_id <- NA_character_
+    clean_id <- as.character(raw_id)
 
-    if (!is.na(taxon$taxonID) && taxon$taxonID != "") {
-      # 1. We have Biologer ID, query the server
-      res_online <- get_taxon_by_id(taxon$taxonID, server = country)
+    # Check if the incoming taxonID is valid
+    has_valid_id <- !is.na(clean_id) &&
+      clean_id != "" &&
+      tolower(clean_id) != "na" &&
+      tolower(clean_id) != "null"
+
+    if (has_valid_id) {
+      # 1. The species has valid Biologer ID
+      res_online <- tryCatch(
+        get_taxon_by_id(clean_id, server = country),
+        error = function(e) {
+          message(sprintf("⚠️ API error for taxonID %s: %s", clean_id, e$message))
+          NULL
+        }
+      )
       if (!is.null(res_online)) taxon_online <- res_online$data
-    } else {
-      # 2. GBIF data lacks a Biologer ID, look in the loaded Biologer dataset first.
-      valid_match <- biologer_data[!is.na(biologer_data$taxonID) & biologer_data$scientificName == species, ]
+    } else if (!is.null(taxa_df)) {
+      # 2. Fall back to the pre-loaded local taxa table
+      taxon_match <- taxa_df[!is.na(taxa_df$name) & taxa_df$name == species &
+        !is.na(taxa_df$id) & taxa_df$id != "" &
+        tolower(taxa_df$id) != "na" &
+        tolower(taxa_df$id) != "null", ]
 
-      if (nrow(valid_match) > 0) {
-        fallback_id <- valid_match$taxonID[1]
-        res_online <- get_taxon_by_id(fallback_id, server = country)
+      if (nrow(taxon_match) > 0) {
+        fallback_id <- as.character(taxon_match$id[1])
+        res_online <- tryCatch(
+          get_taxon_by_id(fallback_id, server = country),
+          error = function(e) {
+            message(sprintf("⚠️ API error for fallback ID %s (%s): %s", fallback_id, species, e$message))
+            NULL
+          }
+        )
         if (!is.null(res_online)) taxon_online <- res_online$data
       } else {
-        # 3. Not found in dataset, fall back to local taxa CSV cache file.
-        taxa_file <- file.path(get_storage_path(), paste0("biologer_taxa_", country, ".csv"))
-
-        if (file.exists(taxa_file)) {
-          taxa_df <- data.table::fread(taxa_file, stringsAsFactors = FALSE, fill = TRUE)
-          taxon_match <- taxa_df[taxa_df$name == species, ]
-
-          if (nrow(taxon_match) > 0) {
-            fallback_id <- taxon_match$id[1] # Fixed from taxa_df$id[1]
-            res_online <- get_taxon_by_id(fallback_id, server = country)
-            if (!is.null(res_online)) taxon_online <- res_online$data
-          } else {
-            message(sprintf("⚠️ Species '%s' could not be matched to any Biologer ID.", species))
-            taxon_online <- NULL
-          }
-        } else {
-          message(sprintf("⚠️ Local taxa cache not found at: %s", taxa_file))
-          taxon_online <- NULL
-        }
+        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any valid ID in the local taxa CSV.", species))
       }
     }
 
@@ -368,13 +362,52 @@ species_within_polygon <- function(
 
   for (i in seq_along(region_species)) {
     species <- region_species[i]
-    print(paste0(
-      "Adding species ", species, "; ", i, " of ", length(region_species)
-    ))
+    if (verbose) print(paste0("Adding species ", species, "; ", i, " of ", length(region_species)))
 
     taxon <- biologer_dt[biologer_dt$scientificName == species][1]
-    taxon_online <- get_taxon_by_id(taxon$taxonID, server = country)$data
-    data_region_dt <- as.data.table(data_region)
+    taxon_online <- NULL
+
+    raw_id <- taxon$taxonID
+    if (is.list(raw_id)) raw_id <- unlist(raw_id)
+    if (length(raw_id) == 0) raw_id <- NA_character_
+    clean_id <- as.character(raw_id)
+
+    has_valid_id <- !is.na(clean_id) &&
+      clean_id != "" &&
+      tolower(clean_id) != "na" &&
+      tolower(clean_id) != "null"
+
+    if (has_valid_id) {
+      # 1. Valid Biologer ID
+      res_online <- tryCatch(
+        get_taxon_by_id(clean_id, server = country),
+        error = function(e) {
+          message(sprintf("⚠️ API error for taxonID %s: %s", clean_id, e$message))
+          NULL
+        }
+      )
+      if (!is.null(res_online)) taxon_online <- res_online$data
+    } else if (!is.null(taxa_df)) {
+      # 2. Fall back to local master taxa table
+      taxon_match <- taxa_df[!is.na(taxa_df$name) & taxa_df$name == species &
+        !is.na(taxa_df$id) & taxa_df$id != "" &
+        tolower(taxa_df$id) != "na" &
+        tolower(taxa_df$id) != "null", ]
+
+      if (nrow(taxon_match) > 0) {
+        fallback_id <- as.character(taxon_match$id[1])
+        res_online <- tryCatch(
+          get_taxon_by_id(fallback_id, server = country),
+          error = function(e) {
+            message(sprintf("⚠️ API error for fallback ID %s (%s): %s", fallback_id, species, e$message))
+            NULL
+          }
+        )
+        if (!is.null(res_online)) taxon_online <- res_online$data
+      } else {
+        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any valid ID in the local taxa CSV.", species))
+      }
+    }
 
     output.list[[length(output.list) + 1]] <- data.frame(
       Class = taxon$class,
