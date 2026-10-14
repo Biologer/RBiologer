@@ -200,23 +200,43 @@ species_within_polygon <- function(
           !is.na(gbif_df$decimalLongitude),
       ]
 
-      common_cols <- intersect(names(biologer_data), names(gbif_df))
+      common_cols <- base::intersect(names(biologer_data), names(gbif_df))
       biologer_data <- rbind(
         biologer_data[, common_cols, drop = FALSE],
-        gbif_df[, common_cols, drop = TRUE]
+        gbif_df[, common_cols, drop = FALSE]
       )
     }
   }
 
   # Subset the dataset to the given higher taxa
+  filter_type <- NULL
+  filter_val <- NULL
+
   if (!is.null(order)) {
     biologer_data <- biologer_data[!is.na(biologer_data$order) & biologer_data$order == order, ]
+    filter_type <- "order"
+    filter_val <- order
   } else if (!is.null(class)) {
     biologer_data <- biologer_data[!is.na(biologer_data$class) & biologer_data$class == class, ]
+    filter_type <- "class"
+    filter_val <- class
   } else if (!is.null(phylum)) {
     biologer_data <- biologer_data[!is.na(biologer_data$phylum) & biologer_data$phylum == phylum, ]
+    filter_type <- "phylum"
+    filter_val <- phylum
   } else if (!is.null(kingdom)) {
     biologer_data <- biologer_data[!is.na(biologer_data$kingdom) & biologer_data$kingdom == kingdom, ]
+    filter_type <- "kingdom"
+    filter_val <- kingdom
+  }
+  if (!is.null(filter_type) && nrow(biologer_data) == 0) {
+    stop(
+      sprintf(
+        "❌ Zero records found in Biologer data after filtering by %s = '%s'.",
+        filter_type, filter_val
+      ),
+      call. = FALSE
+    )
   }
 
   # Convert data.frame to spatial data

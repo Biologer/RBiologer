@@ -112,7 +112,13 @@ map_gbif_to_biologer <- function(gbif_raw) {
     } else {
       NA_character_
     },
-    scientificName = if ("species" %in% names(gbif_raw)) gbif_raw$species else gbif_raw$scientificName,
+    scientificName = if ("species" %in% names(gbif_raw)) {
+      gbif_raw$species
+    } else if ("scientificName" %in% names(gbif_raw)) {
+      gbif_raw$scientificName
+    } else {
+      rep(NA_character_, nrow(gbif_raw))
+    },
     acceptedNameUsage = if ("acceptedScientificName" %in% names(gbif_raw)) {
       gbif_raw$acceptedScientificName
     } else {
@@ -300,7 +306,11 @@ gbif_to_biologer_species_names <- data.frame(
     "Epicallia villica",
     "Oecophora staintoniella",
     "Chrysocrambus craterellus",
-    "Elkalyce amyntula"
+    "Elkalyce amyntula",
+    "Coloeus monedula",
+    "Ardea alba",
+    "Dorcadion fulvum",
+    "Adela viridella"
   ),
   biologer_name = c(
     "Ochlodes sylvanus",
@@ -342,6 +352,10 @@ gbif_to_biologer_species_names <- data.frame(
     "Arctia villica",
     "Alabonia staintoniella",
     "Chrysocrambus craterella",
-    "Cupido argiades"
+    "Cupido argiades",
+    "Corvus monedula",
+    "Casmerodius albus",
+    "Carinatodorcadion fulvum",
+    "Adela reaumurella"
   )
 )
