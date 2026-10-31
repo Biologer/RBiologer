@@ -213,26 +213,28 @@ species_within_polygon <- function(
   filter_val <- NULL
 
   if (!is.null(order)) {
-    biologer_data <- biologer_data[!is.na(biologer_data$order) & biologer_data$order == order, ]
+    biologer_data <- biologer_data[!is.na(biologer_data$order) & biologer_data$order %in% order, ]
     filter_type <- "order"
-    filter_val <- order
+    filter_val <- paste(order, collapse = ", ")
   } else if (!is.null(class)) {
-    biologer_data <- biologer_data[!is.na(biologer_data$class) & biologer_data$class == class, ]
+    biologer_data <- biologer_data[!is.na(biologer_data$class) & biologer_data$class %in% class, ]
     filter_type <- "class"
-    filter_val <- class
+    filter_val <- paste(class, collapse = ", ")
   } else if (!is.null(phylum)) {
-    biologer_data <- biologer_data[!is.na(biologer_data$phylum) & biologer_data$phylum == phylum, ]
+    biologer_data <- biologer_data[!is.na(biologer_data$phylum) & biologer_data$phylum %in% phylum, ]
     filter_type <- "phylum"
-    filter_val <- phylum
+    filter_val <- paste(phylum, collapse = ", ")
   } else if (!is.null(kingdom)) {
-    biologer_data <- biologer_data[!is.na(biologer_data$kingdom) & biologer_data$kingdom == kingdom, ]
+    biologer_data <- biologer_data[!is.na(biologer_data$kingdom) & biologer_data$kingdom %in% kingdom, ]
     filter_type <- "kingdom"
-    filter_val <- kingdom
+    filter_val <- paste(kingdom, collapse = ", ")
   }
+
+  # Gracefully abort if the taxonomic filter wiped out all records
   if (!is.null(filter_type) && nrow(biologer_data) == 0) {
     stop(
       sprintf(
-        "❌ Zero records found in Biologer data after filtering by %s = '%s'.",
+        "❌ Zero records found after filtering by %s = c(%s). Please check if you used the correct taxonomic names or ranks.",
         filter_type, filter_val
       ),
       call. = FALSE
