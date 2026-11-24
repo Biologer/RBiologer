@@ -327,7 +327,7 @@ filter_data_by_license <- function(data = NULL, verbose = FALSE) {
 #'            `taxon.id = c("value1", "value2")`.
 #' @return A subsetted dataframe.
 #' @export
-subset.biologer <- function(df = NULL, ...) {
+biologer_subset <- function(df = NULL, ...) {
   # Load default dataset if df is not supplied
   if (is.null(df)) {
     df <- open_data()
@@ -356,7 +356,7 @@ subset.biologer <- function(df = NULL, ...) {
   }
 
   # Return the subsetted dataframe
-  return(subset_df)
+  subset_df
 }
 
 

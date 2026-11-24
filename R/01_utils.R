@@ -2,7 +2,6 @@
 #' @import data.table
 #' @import curl
 #' @import sf
-#' @importFrom readr write_csv locale
 #' @importFrom sf st_as_sf st_join
 NULL
 
