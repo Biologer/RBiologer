@@ -9,18 +9,17 @@ RBiologer is, as you probably know, an official R package for Biologer. It is us
 You need devtools to install RBiologer from GitHub. Once installed, just load it the standard way using `library(RBiologer)`.
 
 ```
-install.packages("devtools")
-library(devtools)
-install_github("Biologer/RBiologer")
+install.packages("pak")
+pak::pak("Biologer/RBiologer")
 library(RBiologer)
 ```
 
 ### Part 2: Log in to Biologer Server(s)
 
-Use simple `biologer.login()` function to logg into the biologer server(s). For each server, you would need an user token that could be obtained through the web browser from User > Preferences > API Tokens > Generate token (or by typing https://biologer.DOMAIN/preferences/token; where domain is rs, hr, ba or me).
+Use simple `biologer_login()` function to logg into the biologer server(s). For each server, you would need an user token that could be obtained through the web browser from User > Preferences > API Tokens > Generate token (or by typing https://biologer.DOMAIN/preferences/token; where domain is rs, hr, ba or me).
 
 ```
-biologer.login("rs", "YOUR SECRET TOKEN")
+biologer_login("rs", "YOUR SECRET TOKEN")
 ```
 
 ### Part 3: Get the species data from Biologer
