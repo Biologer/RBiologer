@@ -1177,14 +1177,9 @@ open_data <- function(auto.download = TRUE, verbose = TRUE) {
 #'   corresponding ancestor name from the \code{ancestors_names} string.
 #'   Temporary columns (\code{RowID}, \code{TaxaName_*}) are removed.
 #'
-#' @import data.table stringi
-#' @importFrom data.table :=
-#' @importFrom data.table .I
-#' @importFrom data.table .SD
+#' @importFrom data.table := .I .SD
+#' @importFrom stringi stri_count_fixed
 #' @export
-#' @import data.table stringi
-#' @import data.table stringi
-#' @import data.table stringi
 get_parent_taxa <- function(data_table) {
   DT <- data.table::copy(data_table) # Make a copy of the data_table
   DT[, RowID := .I] # Create ID

@@ -6,19 +6,32 @@
 \usage{
 species_within_polygon(
   polygon = NULL,
+  kingdom = NULL,
+  phylum = NULL,
+  class = NULL,
+  order = NULL,
   country = "all",
   area_buffer = 0,
-  region_buffer = 50000,
+  region_buffer = 10000,
   auto.download = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  get_gbif = FALSE
 )
 }
 \arguments{
 \item{polygon}{An sf or terra spatial object defining the area of interest.}
 
+\item{kingdom}{Return only the data from given kingdom.}
+
+\item{phylum}{Return only the data from given phylum}
+
+\item{class}{Return only the data from given class}
+
+\item{order}{Return only the data from given order}
+
 \item{area_buffer}{Numeric. Buffer distance in meters (default 50).}
 
-\item{region_buffer}{Numeric. Buffer distance in meters (default 50,000).}
+\item{region_buffer}{Numeric. Buffer distance in meters (default 10,000).}
 
 \item{auto.download}{Logical. Automatically download new data?}
 
