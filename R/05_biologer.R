@@ -20,7 +20,7 @@
 #' If the CRS of the \code{polygon} and \code{points} do not match, the
 #' \code{polygon} is transformed to match the \code{points}' CRS.
 #'
-#' @importFrom sf st_crs st_transform st_as_sf st_join st_within st_sf st_zm
+#' @importFrom sf st_crs st_transform st_as_sf st_join st_within st_sf st_zm st_read
 #' @export
 #'
 #' @examples
@@ -68,6 +68,23 @@ points_in_polygon <- function(polygon = NULL, data = NULL, verbose = FALSE) {
   ########################################################
   # Preparing the polygons
   ########################################################
+
+  if (is.character(polygon)) {
+    if (length(polygon) != 1L || is.na(polygon) || !nzchar(polygon)) {
+      stop("`polygon` must be a single non-empty file path.", call. = FALSE)
+    }
+
+    polygon_path <- path.expand(polygon)
+    if (!file.exists(polygon_path) || dir.exists(polygon_path)) {
+      stop("Polygon file does not exist or is a directory: ", polygon, call. = FALSE)
+    }
+
+    if (verbose == TRUE) {
+      message("Reading polygon from file: ", polygon)
+    }
+
+    polygon <- st_read(polygon_path, quiet = TRUE)
+  }
 
   if (inherits(polygon, "sfc") && !inherits(polygon, "sf")) {
     if (verbose == TRUE) message("Input polygon is a geometry set (sfc). Converting to sf object.")
