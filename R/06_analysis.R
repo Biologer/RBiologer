@@ -639,12 +639,12 @@ get_local_name <- function(name_string, locale = "en") {
 #' @export
 get_red_list <- function(data = NULL, level = "Europe") {
   if (is.null(data) || length(data) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   for (n in seq_along(data)) {
     if (data[[n]]$name == level) {
-      return(data[[n]]$pivot$category)
+      data[[n]]$pivot$category
     }
   }
 
@@ -672,16 +672,16 @@ get_bern_directive <- function(data = NULL) {
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
 #' @export
 get_habitats_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   matched_annexes <- character(0)
@@ -697,16 +697,16 @@ get_habitats_directive <- function(data = NULL) {
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
 #' @export
 get_cites_convention <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   matched_annexes <- character(0)
@@ -720,9 +720,9 @@ get_cites_convention <- function(data = NULL) {
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
@@ -743,16 +743,16 @@ get_cms_convention <- function(data = NULL) {
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
 #' @export
 get_birds_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   matched_annexes <- character(0)
@@ -767,16 +767,16 @@ get_birds_directive <- function(data = NULL) {
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
 #' @export
 get_protected_species <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   matched_annexes <- character(0)
@@ -786,13 +786,15 @@ get_protected_species <- function(data = NULL) {
       matched_annexes <- c(matched_annexes, "Strictly protected RS")
     } else if (data[[n]]$name == "Serbia 2") {
       matched_annexes <- c(matched_annexes, "Protected RS")
+    } else if (data[[n]]$name == "Protected in Croatia") {
+      matched_annexes <- c(matched_annexes, "Strictly protected HR")
     }
   }
 
   if (length(matched_annexes) == 0) {
-    return(NA_character_)
+    NA_character_
   } else {
-    return(paste(matched_annexes, collapse = ", "))
+    paste(matched_annexes, collapse = ", ")
   }
 }
 
@@ -810,7 +812,7 @@ get_references <- function(dt) {
   refs_dt <- refs_dt[!is.na(publication.authors) & !is.na(publication.year)]
   refs_dt <- unique(refs_dt)
   if (nrow(refs_dt) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   #' @export
@@ -823,44 +825,44 @@ get_references <- function(dt) {
     num_authors <- length(authors_vector)
 
     if (num_authors == 0) {
-      return(NA_character_)
+      NA_character_
     } else if (num_authors > 3) {
       first_author_surname <- unlist(strsplit(authors_vector[1], ","))[1]
-      return(paste0(trimws(first_author_surname), " et al."))
+      paste0(trimws(first_author_surname), " et al.")
     } else if (num_authors == 2) {
       auth1 <- trimws(unlist(strsplit(authors_vector[1], ","))[1])
       auth2 <- trimws(unlist(strsplit(authors_vector[2], ","))[1])
-      return(paste(auth1, "&", auth2))
+      paste(auth1, "&", auth2)
     } else {
       if (num_authors == 1) {
         return(trimws(unlist(strsplit(authors_vector[1], ","))[1]))
       }
-      return(author_string)
+      author_string
     }
   }
 
   formatted_authors <- vapply(refs_dt$publication.authors, format_authors, character(1))
   refs_dt[, formatted_ref := paste(formatted_authors, publication.year)]
 
-  return(paste(sort(unique(refs_dt$formatted_ref)), collapse = ", "))
+  paste(sort(unique(refs_dt$formatted_ref)), collapse = ", ")
 }
 
 #' @export
 get_type_of_record <- function(citation_vector = NULL) {
   if (is.null(citation_vector) || length(citation_vector) == 0) {
-    return(NA_character_)
+    NA_character_
   }
 
   has_literature <- sum(!is.na(citation_vector)) > 0
   has_field_data <- sum(is.na(citation_vector)) > 0
 
   if (has_literature && has_field_data) {
-    return("field and literature")
+    "field and literature"
   } else if (has_literature) {
-    return("literature")
+    "literature"
   } else if (has_field_data) {
-    return("field")
+    "field"
   } else {
-    return(NA_character_)
+    NA_character_
   }
 }
