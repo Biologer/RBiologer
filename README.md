@@ -35,4 +35,5 @@ my_dataset <- as.data.frame(open_data())
 The data gathered through the `open_data()` is provided in standard DarwinCore notation and accessible by other RBiologer functions. You can use the following functions for data processing.
 
 * `points_in_polygon(polygon = area.sf)` allows you to select only the data found in certain area (i.e. your study region).
+* `species_within_polygon(polygon = area.sf, country = "rs")` lists the species recorded within certain area with their threat and conservation status and returns the data from the area and optionally from the regional buffer.
 * `filter_data_by_license()` returns only the publically available data according to the license choosen by the uses. Use this if you are an admin or editor before sharing the data to the world.

@@ -7,6 +7,13 @@ BIOLOGER_URLS <- c(
   "dev" = "https://dev.biologer.rs/api"
 )
 
+COUNTRY_CODE <- c(
+  rs = "Serbia",
+  ba = "Bosnia and Herzegovina",
+  me = "Montenegro",
+  hr = "Croatia"
+)
+
 FIELD_OBS_COLUMNS <- c(
   "id", "day", "month", "year", "location", "latitude", "longitude", "mgrs10k",
   "accuracy", "elevation", "photos", "observer", "identifier", "license", "sex",

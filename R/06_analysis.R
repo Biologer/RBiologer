@@ -1,14 +1,22 @@
 #' Summary of Data within a Polygon
 #'
-#' @param polygon An sf or terra spatial object defining the area of interest.
+#' @param polygon An sf or terra spatial object defining the area of interest
+#' or a path to a spatial file (GPKG, SHP, KML, etc.).
 #' @param kingdom Return only the data from given kingdom.
-#' @param phylum Return only the data from given phylum
-#' @param class Return only the data from given class
-#' @param order Return only the data from given order
-#' @param area_buffer Numeric. Buffer distance in meters (default 50).
-#' @param region_buffer Numeric. Buffer distance in meters (default 10,000).
+#' @param phylum Return only the data from given phylum.
+#' @param class Return only the data from given class.
+#' @param order Return only the data from given order.
+#' @param country Country selection is crucial for extracting legal framework
+#' for the study area and other country specific parameters. Valid values are
+#' "rs", "hr", "ba", and "me".
+#' @param area_buffer Numeric. Buffer distance in meters – +
+#' these species will be included as present within the study area.
+#' @param region_buffer Numeric. Buffer distance in meters – these species
+#' will not be included within the study area, but will be listed in the output.
 #' @param auto.download Logical. Automatically download new data?
 #' @param verbose Logical. Print progress messages?
+#' @param get_gbif Logical. Allows the function to download data from GBIF
+#' along with Biologer datasets.
 #'
 #' @return A summary data frame/table.
 #' @export
@@ -17,22 +25,28 @@
 #' @import terra
 #' @import giscoR
 #' @import rgbif
-species_within_polygon <- function(
-  polygon = NULL,
-  kingdom = NULL,
-  phylum = NULL,
-  class = NULL,
-  order = NULL,
-  country = "all",
-  area_buffer = 0,
-  region_buffer = 10000,
-  auto.download = TRUE,
-  verbose = TRUE,
-  get_gbif = FALSE
-) {
+species_within_polygon <- function(polygon = NULL,
+                                   kingdom = NULL,
+                                   phylum = NULL,
+                                   class = NULL,
+                                   order = NULL,
+                                   country = NULL,
+                                   area_buffer = 0,
+                                   region_buffer = 0,
+                                   auto.download = TRUE,
+                                   verbose = TRUE,
+                                   get_gbif = FALSE) {
   if (is.null(polygon)) {
     stop("You must provide study area polygon (i.e. path to KML or SHP polygon file).", call. = FALSE)
   }
+
+  if (length(country) != 1L || is.na(country) || !(country %in% c("rs", "hr", "ba", "me"))) {
+    stop("You must provide the value for the country. This value is used to select local Biologer
+    database for query species threat and conservation status and for calculating national coverage – 
+    the proportion of 1×1 km squares within the area in contrast to proportion of 1×1 km squares in 
+    the whole country. Valid values are \"rs\", \"hr\", \"ba\", and \"me\"", call. = FALSE)
+  }
+  country_name <- unname(COUNTRY_CODE[[country]])
 
   # Get the Biologer data
   biologer_data <- open_data(auto.download, verbose)
@@ -40,8 +54,47 @@ species_within_polygon <- function(
   biologer_data <- biologer_data[!is.na(biologer_data$taxonID), ]
   biologer_data <- as.data.frame(biologer_data)
 
-  # Load study area and create buffers
+  # Load study area and inspect polygon validity
   study_area <- terra::vect(polygon)
+
+  if (is.character(polygon) && length(polygon) == 1L && nzchar(polygon)) {
+    polygon_path <- path.expand(polygon)
+    if (file.exists(polygon_path) && !dir.exists(polygon_path)) {
+
+      # 1. Check for multiple layers in KML or GPKG files
+      layers <- tryCatch(sf::st_layers(polygon_path), error = function(e) NULL)
+      if (!is.null(layers) && length(layers$name) > 1L && isTRUE(verbose)) {
+        message(sprintf(
+          "Note: '%s' contains %d layers (%s); reading default/first layer.",
+          basename(polygon), length(layers$name), paste(layers$name, collapse = ", ")
+        ))
+      }
+
+      # 2. Inspect with sf to detect 3D (Z/M) coordinates or invalid geometries
+      sf_check <- tryCatch(sf::st_read(polygon_path, quiet = TRUE), error = function(e) NULL)
+      if (!is.null(sf_check) && nrow(sf_check) > 0L) {
+        dims_3d <- vapply(sf::st_geometry(sf_check), function(g) {
+          pts <- sf::st_coordinates(g)
+          any(c("Z", "M") %in% colnames(pts))
+        }, logical(1))
+        if (any(dims_3d) && isTRUE(verbose)) {
+          message(sprintf(
+            "Note: '%s' contains 3D (Z/M) coordinates; Z/M dimensions will be dropped on projection.",
+            basename(polygon)
+          ))
+        }
+
+        if (any(!sf::st_is_valid(sf_check), na.rm = TRUE)) {
+          if (isTRUE(verbose)) {
+            message(sprintf("Note: '%s' contains invalid polygon geometries; attempting repair.", basename(polygon)))
+          }
+          study_area <- terra::makeValid(study_area)
+        }
+      }
+    }
+  }
+
+  # Create buffer zone around the study area
   study_area_laea <- terra::project(study_area, "EPSG:3035")
   area_buf_laea <- terra::buffer(study_area_laea, width = area_buffer)
   region_buf_laea <- terra::buffer(study_area_laea, width = region_buffer)
@@ -64,13 +117,13 @@ species_within_polygon <- function(
     if (verbose) message("Preparing spatial tiles for GBIF batch download...")
 
     region_laea <- terra::project(study_region, "EPSG:3035")
-    tile_raster <- terra::rast(region_laea, res = 5000)
-    tiles_poly <- terra::as.polygons(tile_raster, values = FALSE)
+    tiles_raster <- terra::rast(region_laea, res = 5000)
+    tiles_poly <- terra::as.polygons(tiles_raster, values = FALSE)
     tiles_intersect <- terra::intersect(tiles_poly, region_laea)
     tiles_wgs84 <- terra::project(tiles_intersect, "EPSG:4326")
     total_tiles <- terra::nrow(tiles_wgs84)
 
-    if (verbose) message(sprintf("Study region split into %d tiles for GBIF querying.", total_tiles))
+    if (verbose) message(sprintf("Study region was splited into %d tiles for GBIF querying.", total_tiles))
 
     gbif_list <- list()
     max_attempts <- 3
@@ -230,11 +283,11 @@ species_within_polygon <- function(
     filter_val <- paste(kingdom, collapse = ", ")
   }
 
-  # Gracefully abort if the taxonomic filter wiped out all records
   if (!is.null(filter_type) && nrow(biologer_data) == 0) {
     stop(
       sprintf(
-        "❌ Zero records found after filtering by %s = c(%s). Please check if you used the correct taxonomic names or ranks.",
+        "⚠️ Zero records found after filtering by %s = c(%s). Please check if you used the
+        correct taxonomic names or ranks.",
         filter_type, filter_val
       ),
       call. = FALSE
@@ -295,7 +348,7 @@ species_within_polygon <- function(
   ]
 
   output.list <- list()
-  # Rund the query for get the taxon data by taxon ID
+  # Run the query to get the taxon data by taxon ID
   for (i in seq_along(area_species)) {
     species <- area_species[i]
     if (verbose) print(paste0("Adding species ", species, "; ", i, " of ", length(area_species)))
@@ -338,12 +391,19 @@ species_within_polygon <- function(
       if (!is.null(res_online)) taxon_online <- res_online$data
     } else if (!is.null(taxa_df)) {
       # 2. Fall back to the pre-loaded local taxa table
-      taxon_match <- taxa_df[!is.na(taxa_df$name) & taxa_df$name == species &
+      taxon_match <- taxa_df[
+        !is.na(taxa_df$name) & taxa_df$name == species &
         !is.na(taxa_df$id) & taxa_df$id != "" &
         tolower(taxa_df$id) != "na" &
-        tolower(taxa_df$id) != "null", ]
+        tolower(taxa_df$id) != "null",
+      ]
 
       if (nrow(taxon_match) > 0) {
+        if (nrow(taxon_match) > 1) {
+          print(paste0("There is more than one (", nrow(taxon_match), ") taxa in the local
+          taxonomic database. The output might be wrong for the species ", species, ".\nThese
+          are: ", taxon_match$name))
+        }
         fallback_id <- as.character(taxon_match$id[1])
         res_online <- tryCatch(
           get_taxon_by_id(fallback_id, server = country),
@@ -354,7 +414,8 @@ species_within_polygon <- function(
         )
         if (!is.null(res_online)) taxon_online <- res_online$data
       } else {
-        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any valid ID in the local taxa CSV.", species))
+        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any
+        valid ID in the local taxa CSV.", species))
       }
     }
 
@@ -373,7 +434,7 @@ species_within_polygon <- function(
       NationalLeg = get_protected_species(taxon_online$conservation_legislations),
       RedList = get_red_list(level = "Global", taxon_online$red_lists),
       RedListEu = get_red_list(level = "Europe", taxon_online$red_lists),
-      RedListRS = get_red_list(level = "Serbia", taxon_online$red_lists),
+      RedListNational = get_red_list(level = country_name, taxon_online$red_lists),
       References = get_references(data_region[data_region$scientificName == species]),
       Years = paste(sort(unique(data_region[data_region$scientificName == species]$year)), collapse = ", "),
       Location = "within",
@@ -427,7 +488,8 @@ species_within_polygon <- function(
         )
         if (!is.null(res_online)) taxon_online <- res_online$data
       } else {
-        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any valid ID in the local taxa CSV.", species))
+        if (verbose) message(sprintf("⚠️ Species '%s' could not be matched to any valid ID
+        in the local taxa CSV.", species))
       }
     }
 
@@ -446,7 +508,7 @@ species_within_polygon <- function(
       NationalLeg = get_protected_species(taxon_online$conservation_legislations),
       RedList = get_red_list(level = "Global", taxon_online$red_lists),
       RedListEu = get_red_list(level = "Europe", taxon_online$red_lists),
-      RedListRS = get_red_list(level = "Serbia", taxon_online$red_lists),
+      RedListNational = get_red_list(level = country_name, taxon_online$red_lists),
       References = get_references(data_region[data_region$scientificName == species]),
       Years = paste(sort(unique(data_region[data_region$scientificName == species]$year)), collapse = ", "),
       Location = "outside",
@@ -455,14 +517,19 @@ species_within_polygon <- function(
     )
   }
 
-  output_table <- do.call(rbind, output.list)
-  output_table <- as.data.frame(output_table)
-  output_table <- output_table[order(
-    output_table[, 1],
-    output_table[, 2],
-    output_table[, 3],
-    output_table[, 4]
-  ), ]
+  if (length(output.list) > 0) {
+    output_table <- do.call(rbind, output.list)
+    output_table <- as.data.frame(output_table)
+    names(output_table)[names(output_table) == "RedListNational"] <- paste0("RedList", toupper(country))
+    output_table <- output_table[order(
+      output_table[, 1],
+      output_table[, 2],
+      output_table[, 3],
+      output_table[, 4]
+    ), ]
+  } else  {
+    output_table <- NULL
+  }
 
   df_area <- as.data.frame(data_area, geom = "XY")
   names(df_area)[names(df_area) == "x"] <- "decimalLongitude"
@@ -581,7 +648,7 @@ get_red_list <- function(data = NULL, level = "Europe") {
     }
   }
 
-  return(NA_character_)
+  NA_character_
 }
 
 #' @export
