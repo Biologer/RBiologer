@@ -639,12 +639,12 @@ get_local_name <- function(name_string, locale = "en") {
 #' @export
 get_red_list <- function(data = NULL, level = "Europe") {
   if (is.null(data) || length(data) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   for (n in seq_along(data)) {
     if (data[[n]]$name == level) {
-      data[[n]]$pivot$category
+      return(data[[n]]$pivot$category)
     }
   }
 
@@ -681,7 +681,7 @@ get_bern_directive <- function(data = NULL) {
 #' @export
 get_habitats_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   matched_annexes <- character(0)
@@ -706,7 +706,7 @@ get_habitats_directive <- function(data = NULL) {
 #' @export
 get_cites_convention <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   matched_annexes <- character(0)
@@ -752,7 +752,7 @@ get_cms_convention <- function(data = NULL) {
 #' @export
 get_birds_directive <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   matched_annexes <- character(0)
@@ -776,7 +776,7 @@ get_birds_directive <- function(data = NULL) {
 #' @export
 get_protected_species <- function(data = NULL) {
   if (is.null(data) || length(data) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   matched_annexes <- character(0)
@@ -812,10 +812,9 @@ get_references <- function(dt) {
   refs_dt <- refs_dt[!is.na(publication.authors) & !is.na(publication.year)]
   refs_dt <- unique(refs_dt)
   if (nrow(refs_dt) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
-  #' @export
   # Format authors (et al. role)
   format_authors <- function(author_string) {
     authors_vector <- unlist(strsplit(author_string, split = ";|\\band\\b"))
@@ -850,7 +849,7 @@ get_references <- function(dt) {
 #' @export
 get_type_of_record <- function(citation_vector = NULL) {
   if (is.null(citation_vector) || length(citation_vector) == 0) {
-    NA_character_
+    return(NA_character_)
   }
 
   has_literature <- sum(!is.na(citation_vector)) > 0
